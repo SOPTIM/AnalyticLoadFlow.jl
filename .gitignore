@@ -1,0 +1,34 @@
+# Julia artifacts and local environments
+.julia/
+artifacts/
+
+# Build, documentation, and package outputs
+build/
+
+# Documenter.jl generated output
+docs/build/
+docs/src/README.md
+docs/src/index.md
+
+*.tar.gz
+*.zip
+
+# Runtime and benchmark output
+_out/
+out/
+output/
+*.log
+*.csv
+*.tsv
+*.jsonl
+
+# Local data caches
+/data/_downloaded/
+/examples/_out/
+/examples/legacy_sparlectra/_out/
+/docs/src/CHANGELOG.md
+
+# Editor and OS files
+.DS_Store
+.vscode/
+Manifest.toml

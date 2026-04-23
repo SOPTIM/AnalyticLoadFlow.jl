@@ -1,0 +1,36 @@
+# Purpose: Run package tests and compact CLI smoke tests for the public reference examples.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+
+      - name: Run package tests
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+
+      - name: Run LV 400 V CLI smoke test
+        run: julia --project=. examples/lv_400v_streets_ybus_demo.jl
+
+      - name: Run 9-bus Q-limit CLI smoke test
+        run: julia --project=. examples/minimal_ybus_demo.jl --case=9 --inner=pq
+
+      - name: Run synthetic 118-bus CLI smoke test
+        run: julia --project=. examples/synthetic_118_ybus_demo.jl
+
+      - name: Run tiled-grid scaling CLI smoke test
+        run: julia --project=. examples/tiled_grid_scaling_demo.jl --buses=25 --order=12 --samples=1 --warmup=0 --no-nr-polish
+
+      - name: Run combined CLI smoke test
+        run: julia --project=. examples/minimal_ybus_demo.jl --case=all --inner=pq
