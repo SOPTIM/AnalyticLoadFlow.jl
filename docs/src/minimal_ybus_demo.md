@@ -82,7 +82,7 @@ The LV 400 V example is intended as a compact educational integration example, n
 
 ### Parametric Tiled-Grid Scaling Example
 
-`examples/tiled_grid_scaling_demo.jl` uses the existing tiled-grid helpers, including `APSLF.build_tiled_grid_spec`, to build a synthetic one-voltage-level sparse Y-bus network. The user can request the maximum number of buses with `--buses=N`; the actual number may be lower because the helper chooses a rectangular grid with `rows * cols <= requested_buses`.
+`examples/tiled_grid_scaling_demo.jl` uses the existing tiled-grid helpers, including `AnalyticLoadFlow.build_tiled_grid_spec`, to build a synthetic one-voltage-level sparse Y-bus network. The user can request the maximum number of buses with `--buses=N`; the actual number may be lower because the helper chooses a rectangular grid with `rows * cols <= requested_buses`.
 
 Run it from the project root with:
 
@@ -108,7 +108,7 @@ The integration wrapper reads the case fields and calls APSLF:
 res = solve_demo_case(case; inner = :pq, order = 40)
 ```
 
-Internally, this forwards `case.Y`, `case.bustype`, `case.Pspec`, `case.Qspec`, `case.Vm`, `case.Qmin`, `case.Qmax`, and `case.slack` to `APSLF.solve_pf_apslf_with_pv_q_limits(...)`.
+Internally, this forwards `case.Y`, `case.bustype`, `case.Pspec`, `case.Qspec`, `case.Vm`, `case.Qmin`, `case.Qmax`, and `case.slack` to `AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(...)`.
 
 ## Reusing the Integration Pattern
 

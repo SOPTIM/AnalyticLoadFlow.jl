@@ -22,7 +22,7 @@
 
 using Test
 using Logging
-using APSLF
+using AnalyticLoadFlow
 
 const _SUITE_FILES = (
    ("Core Solver Functions", "test_solver_core.jl"),
@@ -49,7 +49,7 @@ _prev_print_enable = Test.TESTSET_PRINT_ENABLE[]
 Test.TESTSET_PRINT_ENABLE[] = false
 
 test_results = try
-   @testset "APSLF.jl Complete Test Suite" begin
+   @testset "AnalyticLoadFlow.jl Complete Test Suite" begin
       total = length(_SUITE_FILES)
       _render_progress(0, total, "starting")
       for (idx, (label, file)) in enumerate(_SUITE_FILES)

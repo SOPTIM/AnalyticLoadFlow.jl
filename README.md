@@ -1,12 +1,12 @@
-# APSLF.jl
+# AnalyticLoadFlow.jl
 
 Compact Julia reference implementation of an analytic power-series based AC load-flow approach.
 
 ## Project Status
 
-APSLF.jl is provided by SOPTIM AG as a compact reference implementation of an analytic power-series based AC load-flow approach.
+AnalyticLoadFlow.jl is provided by SOPTIM AG as a compact reference implementation of an analytic power-series based AC load-flow approach.
 
-The repository is intentionally kept small and mostly static. It is provided for study, reproducibility, and experimentation with the method. SOPTIM AG does not maintain APSLF.jl as an industrial power-flow product, does not provide commercial support for it, and does not offer it as part of a commercial product or service.
+The repository is intentionally kept small and mostly static. It is provided for study, reproducibility, and experimentation with the method. SOPTIM AG does not maintain AnalyticLoadFlow.jl as an industrial power-flow product, does not provide commercial support for it, and does not offer it as part of a commercial product or service.
 
 The code is made available under the Apache-2.0 license. This does not imply any warranty, maintenance obligation, support commitment, or product roadmap by SOPTIM AG.
 
@@ -47,13 +47,15 @@ See CHANGELOG.md for notable user-visible changes.
 
 ## Installation
 
-From the repository root:
+From the Julia package registry:
 
 ```julia
 using Pkg
-Pkg.activate(".")
-Pkg.instantiate()
+Pkg.add("AnalyticLoadFlow")
+using AnalyticLoadFlow
 ```
+
+From a local checkout, run commands with `julia --project=.` from the repository root.
 
 ## Run the example
 
@@ -97,7 +99,7 @@ julia --project=. examples/minimal_ybus_demo.jl --case=all --inner=pq
 
 The console examples are thin entry points: reusable demo data and solver helpers live in `src/demo_cases.jl`, while presentation and argument parsing stay in `examples/`. The examples print summaries for users and intentionally return `nothing` from `main`. They provide the same NamedTuple data contract: `Y`, `bustype`, `Pspec`, `Qspec`, `Vm`, `Qmin`, `Qmax`, and `slack`.
 
-The `tiled_grid_scaling_demo.jl` script is the direct entry point for synthetic tiled-grid timing runs. The `lv_400v_streets_ybus_demo.jl` and `synthetic_118_ybus_demo.jl` scripts are the shortest direct entry points for their generated examples. The `minimal_ybus_demo.jl` script remains the console integration template and supports the 9-bus, LV 400 V, synthetic 118-bus, and combined runs. The LV 400 V and 118-bus cases are synthetic generated data; the LV case is not a real grid model, and the 118-bus case is not the official IEEE 118 benchmark data. Tests validate the reusable helpers and solver path directly via `using APSLF`; they do not include example scripts.
+The `tiled_grid_scaling_demo.jl` script is the direct entry point for synthetic tiled-grid timing runs. The `lv_400v_streets_ybus_demo.jl` and `synthetic_118_ybus_demo.jl` scripts are the shortest direct entry points for their generated examples. The `minimal_ybus_demo.jl` script remains the console integration template and supports the 9-bus, LV 400 V, synthetic 118-bus, and combined runs. The LV 400 V and 118-bus cases are synthetic generated data; the LV case is not a real grid model, and the 118-bus case is not the official IEEE 118 benchmark data. Tests validate the reusable helpers and solver path directly via `using AnalyticLoadFlow`; they do not include example scripts.
 
 ## Architecture
 
@@ -106,7 +108,7 @@ See `docs/src/architecture_overview.md` for the public interface, Y-bus data mod
 ## Basic usage
 
 ```julia
-using APSLF
+using AnalyticLoadFlow
 
 spec = (
     Y = Y,

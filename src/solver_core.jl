@@ -847,7 +847,7 @@ end
 function _handle_deprecated_apslf_germ_kwargs(kwargs; context::AbstractString, strict::Bool = true)
    for (key, value) in pairs(kwargs)
       if key === :flatstart
-         @warn "`flatstart` is deprecated for APSLF. APSLF always uses the canonical analytic germ V(s=0)=1∠0. This option will be removed." context =
+         @warn "`flatstart` is deprecated for the APSLF solver. APSLF always uses the canonical analytic germ V(s=0)=1∠0. This option will be removed." context =
             context flatstart = value
       elseif key === :V0_germ
          @warn "`V0_germ` is not a Newton start value. Passing a custom APSLF germ changes the analytic embedding and is no longer supported in the main APSLF solver path." context =

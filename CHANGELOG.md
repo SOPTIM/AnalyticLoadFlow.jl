@@ -1,6 +1,6 @@
 # Changelog
 
-Purpose: This changelog summarizes notable APSLF.jl changes by released version.
+Purpose: This changelog summarizes notable AnalyticLoadFlow.jl changes by released version.
 
 ## Version 0.9.14
 

@@ -1,9 +1,9 @@
 [deps]
-APSLF = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
+AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 
 [sources]
-APSLF = {path = ".."}
+AnalyticLoadFlow = {path = ".."}
 
 [compat]
 Documenter = "1"

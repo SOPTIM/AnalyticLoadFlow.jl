@@ -1,5 +1,5 @@
 # =============================================================================
-# File: src/APSLF.jl
+# File: src/AnalyticLoadFlow.jl
 # Date: 2026-07-08
 # Author: Udo Schmitz
 # Organization: SOPTIM AG
@@ -20,7 +20,7 @@
 # limitations under the License.
 # =============================================================================
 
-module APSLF
+module AnalyticLoadFlow
 
 using LinearAlgebra
 using Printf

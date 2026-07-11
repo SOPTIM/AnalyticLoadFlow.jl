@@ -22,7 +22,7 @@
 # limitations under the License.
 # =============================================================================
 
-using APSLF
+using AnalyticLoadFlow
 using LinearAlgebra
 using Printf
 
@@ -103,7 +103,7 @@ function print_solution_summary(case, res; inner = :pq, order = 40)
    max_rows = length(res.V) <= 20 ? nothing : 20
    print_bus_voltages_table(case, bt_final, res.V; max_rows = max_rows)
 
-   maxP, maxQ = APSLF.compute_demo_mismatch(case, res)
+   maxP, maxQ = AnalyticLoadFlow.compute_demo_mismatch(case, res)
    println("\n--- Sanity check: mismatch on given Y-bus ---")
    @printf("Max |ΔP| (pu) = %.3e\n", maxP)
    @printf("Max |ΔQ| (pu) = %.3e\n", maxQ)
@@ -118,9 +118,9 @@ function print_stability_summary(res; slack, order)
       return nothing
    end
 
-   st = APSLF.stability_from_Vcoeff(Vcoeff; slack = slack, order = order, critical_poles = :auto)
+   st = AnalyticLoadFlow.stability_from_Vcoeff(Vcoeff; slack = slack, order = order, critical_poles = :auto)
    if isfinite(st.dmin)
-      lvl = APSLF.st_level(st.dmin)
+      lvl = AnalyticLoadFlow.st_level(st.dmin)
       @printf(
          "st_dmin = %.3e   st_lvl = %s   st_bus = %d   pole = %+.6f%+.6fi   [L/M]=[%d/%d]\n",
          st.dmin,
@@ -143,7 +143,7 @@ function print_stability_summary(res; slack, order)
    return nothing
 end
 
-function run_demo(case = APSLF.demo_case_9bus(); inner::Symbol, order::Int = 40, nr_polish::Bool = true)
+function run_demo(case = AnalyticLoadFlow.demo_case_9bus(); inner::Symbol, order::Int = 40, nr_polish::Bool = true)
    use_pade = true
    verbose = 0
    max_outer = 20
@@ -153,7 +153,7 @@ function run_demo(case = APSLF.demo_case_9bus(); inner::Symbol, order::Int = 40,
    println("inner=$(inner)   order=$(order)   use_pade=$(use_pade)   nr_polish=$(nr_polish)")
    println("="^80)
 
-   res = APSLF.solve_demo_case(
+   res = AnalyticLoadFlow.solve_demo_case(
       case;
       inner = inner,
       order = order,
@@ -207,16 +207,16 @@ end
 
 function selected_cases(case_option)
    if case_option == "9"
-      return [("9-bus teaching case", APSLF.demo_case_9bus())]
+      return [("9-bus teaching case", AnalyticLoadFlow.demo_case_9bus())]
    elseif case_option == "lv400"
-      return [("synthetic 400 V LV street-feeder case", APSLF.demo_case_lv_400v_streets())]
+      return [("synthetic 400 V LV street-feeder case", AnalyticLoadFlow.demo_case_lv_400v_streets())]
    elseif case_option == "118"
-      return [("synthetic 118-bus integration case", APSLF.demo_case_118bus_synthetic())]
+      return [("synthetic 118-bus integration case", AnalyticLoadFlow.demo_case_118bus_synthetic())]
    elseif case_option == "all"
       return [
-         ("9-bus teaching case", APSLF.demo_case_9bus()),
-         ("synthetic 400 V LV street-feeder case", APSLF.demo_case_lv_400v_streets()),
-         ("synthetic 118-bus integration case", APSLF.demo_case_118bus_synthetic()),
+         ("9-bus teaching case", AnalyticLoadFlow.demo_case_9bus()),
+         ("synthetic 400 V LV street-feeder case", AnalyticLoadFlow.demo_case_lv_400v_streets()),
+         ("synthetic 118-bus integration case", AnalyticLoadFlow.demo_case_118bus_synthetic()),
       ]
    else
       error("Unsupported case: $(case_option). Use --case=9, --case=lv400, --case=118, or --case=all.")

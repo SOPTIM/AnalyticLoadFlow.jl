@@ -24,7 +24,7 @@
 # file: docs/make.jl
 
 using Documenter
-using APSLF
+using AnalyticLoadFlow
 
 let
    docs_dir = @__DIR__
@@ -71,8 +71,8 @@ pages = [
 ]
 
 makedocs(
-   modules = [APSLF],
-   sitename = "APSLF.jl",
+   modules = [AnalyticLoadFlow],
+   sitename = "AnalyticLoadFlow.jl",
    authors = "Udo Schmitz and contributors",
    format = Documenter.HTML(
       prettyurls = get(ENV, "CI", "false") == "true",

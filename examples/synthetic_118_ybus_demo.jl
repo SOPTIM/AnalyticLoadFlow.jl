@@ -22,7 +22,7 @@
 # =============================================================================
 
 
-using APSLF
+using AnalyticLoadFlow
 
 old_autorun = get(ENV, "APSLF_SUITE_NO_AUTORUN", nothing)
 ENV["APSLF_SUITE_NO_AUTORUN"] = "1"
@@ -43,7 +43,7 @@ function main(args = ARGS)
 
    println("Synthetic 118-bus-sized APSLF integration case")
    println("Generated data only: not official IEEE 118 benchmark data.")
-   case = APSLF.demo_case_118bus_synthetic()
+   case = AnalyticLoadFlow.demo_case_118bus_synthetic()
    run_demo(case; inner = :pq, order = 40, nr_polish = true)
    return nothing
 end

@@ -1,4 +1,4 @@
-name = "APSLF"
+name = "AnalyticLoadFlow"
 uuid = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 version = "0.9.14"
 authors = ["SCUD-SOPTIM <udo.schmitz@soptim.de>"]

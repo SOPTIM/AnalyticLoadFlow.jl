@@ -22,7 +22,7 @@
 # limitations under the License.
 # =============================================================================
 
-using APSLF
+using AnalyticLoadFlow
 using Printf
 using Statistics
 
@@ -70,7 +70,7 @@ function parse_demo_args(args = ARGS)
 end
 
 function solve_case(case, opts)
-   return APSLF.solve_demo_case(
+   return AnalyticLoadFlow.solve_demo_case(
       case;
       inner = :pq,
       order = opts.order,
@@ -114,13 +114,13 @@ function main(args = ARGS)
    )
 
    build_t0 = time_ns()
-   case, meta = APSLF.build_tiled_grid_spec(opts.buses, cfg)
+   case, meta = AnalyticLoadFlow.build_tiled_grid_spec(opts.buses, cfg)
    build_time_ms = (time_ns() - build_t0) / 1.0e6
 
    solve_times_ms, res = timed_solve_samples(case, opts)
    min_vm = minimum(abs.(res.V))
    max_vm = maximum(abs.(res.V))
-   max_p_mismatch, max_q_mismatch = APSLF.compute_demo_mismatch(case, res)
+   max_p_mismatch, max_q_mismatch = AnalyticLoadFlow.compute_demo_mismatch(case, res)
    max_mismatch = max(max_p_mismatch, max_q_mismatch)
 
    println("Synthetic tiled-grid APSLF scaling example")

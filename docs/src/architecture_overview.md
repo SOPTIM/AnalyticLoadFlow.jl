@@ -1,7 +1,7 @@
-# APSLF.jl – Architecture Overview
+# AnalyticLoadFlow.jl – Architecture Overview
 
 ## 1. Overall System
-Repository: https://github.com/SOPTIM/APSLF
+Repository: https://github.com/SOPTIM/AnalyticLoadFlow.jl
 
 ### Architectural Boundary
 
@@ -9,7 +9,7 @@ APSLF operates on an already constructed Y-bus matrix. The public minimal interf
 
 ```text
 External grid format
-        ↓  not part of APSLF.jl
+        ↓  not part of AnalyticLoadFlow.jl
 Conversion into Y + case vectors
         ↓
 APSLF data model
@@ -52,11 +52,11 @@ Result, diagnostics, and console output
 
 ## 2. Public Interface
 
-### Role of `src/APSLF.jl`
+### Role of `src/AnalyticLoadFlow.jl`
 
-`src/APSLF.jl` is the central module and API entry point:
+`src/AnalyticLoadFlow.jl` is the central module and API entry point:
 
-- defines the `APSLF` module,
+- defines the `AnalyticLoadFlow` module,
 - loads the implementation files,
 - exposes the supported functions as a public API,
 - separates the preferred high-level entry point from older and specialized solver paths.
@@ -85,7 +85,7 @@ For new applications, the current high-level interface should be used where poss
 ### Typical Solver Call
 
 ```julia
-using APSLF
+using AnalyticLoadFlow
 
 spec = (
     Y = Y,
@@ -98,7 +98,7 @@ spec = (
     slack = slack,
 )
 
-res = APSLF.solve_pf_apslf(
+res = AnalyticLoadFlow.solve_pf_apslf(
     spec;
     mode = :direct,
     order = 40,
@@ -163,9 +163,9 @@ metadata      topology or generation information
 ## 4. Directory and File Structure
 
 ```text
-APSLF/
+AnalyticLoadFlow/
 ├── src/
-│   ├── APSLF.jl
+│   ├── AnalyticLoadFlow.jl
 │   ├── solver_core.jl
 │   ├── demo_cases.jl
 │   ├── utils.jl
@@ -204,7 +204,7 @@ APSLF/
 
 | File | Purpose |
 |---|---|
-| `src/APSLF.jl` | Module definition, includes, and public exports |
+| `src/AnalyticLoadFlow.jl` | Module definition, includes, and public exports |
 | `src/solver_core.jl` | APSLF core, Taylor/Padé evaluation, PQ/PV handling, Q limits, and NR polish |
 | `src/demo_cases.jl` | Reusable case builders and demo wrappers for examples and tests |
 | `src/utils.jl` | Formatting, mismatch, stability, and logging helpers as well as tiled-grid builders |

@@ -23,7 +23,7 @@
 using Test
 using LinearAlgebra
 using Random
-using APSLF
+using AnalyticLoadFlow
 
 """
 Robustness and edge case tests for APSLF solver
@@ -37,7 +37,7 @@ Robustness and edge case tests for APSLF solver
          Y = reshape([1.0 + 0.5im], 1, 1)
          S = [0.0 + 0.0im]
 
-         V, _, _ = APSLF.apslf_pq(Y, S; slack = 1, order = 4)
+         V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; slack = 1, order = 4)
          @test V[1] ≈ 1.0 + 0.0im
       end
 
@@ -47,7 +47,7 @@ Robustness and edge case tests for APSLF solver
 
          # Either returns a valid solution OR throws a clean SingularException.
          try
-            V, _, _ = APSLF.apslf_pq(Y, S; order = 6, use_pade = true)
+            V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 6, use_pade = true)
             @test all(isfinite.(V))
             @test abs(V[1] - 1.0) < 1e-12
          catch e
@@ -60,7 +60,7 @@ Robustness and edge case tests for APSLF solver
          S = [0.0 + 0.0im, 10.0 + 5.0im]
 
          try
-            V, _, _ = APSLF.apslf_pq(Y, S; order = 20, use_pade = true)
+            V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 20, use_pade = true)
             @test all(isfinite.(V))
          catch e
             @test isa(e, SingularException) || isa(e, DomainError) || isa(e, ArgumentError)
@@ -71,7 +71,7 @@ Robustness and edge case tests for APSLF solver
          Y = [1e-6-1e-7im -1e-7+1e-8im; -1e-7+1e-8im 1e-6-1e-7im]
          S = [0.0 + 0.0im, 1e-9 + 1e-10im]
 
-         V, _, _ = APSLF.apslf_pq(Y, S; order = 8)
+         V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 8)
          @test all(isfinite.(V))
       end
 
@@ -79,7 +79,7 @@ Robustness and edge case tests for APSLF solver
          Y = [1e6-1e5im -1e5+1e4im; -1e5+1e4im 1e6-1e5im]
          S = [0.0 + 0.0im, 1e3 + 1e2im]
 
-         V, _, _ = APSLF.apslf_pq(Y, S; order = 8)
+         V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 8)
          @test all(isfinite.(V))
       end
    end
@@ -89,7 +89,7 @@ Robustness and edge case tests for APSLF solver
       @testset "Minimum coefficient case" begin
          L, M = 2, 1
          c = [1.0 + 0.0im, 0.5 + 0.0im, 0.25 + 0.0im, 0.125 + 0.0im]
-         result = APSLF.pade_eval(c, L, M)
+         result = AnalyticLoadFlow.pade_eval(c, L, M)
          @test isfinite(result) || isinf(result)
       end
 
@@ -98,7 +98,7 @@ Robustness and edge case tests for APSLF solver
          c = [1.0 / factorial(min(n, 20)) + 0.0im for n = 0:N]
          L, M = 15, 15
          try
-            result = APSLF.pade_eval(c, L, M)
+            result = AnalyticLoadFlow.pade_eval(c, L, M)
             @test isfinite(result) || isinf(result)
          catch e
             @test isa(e, SingularException)
@@ -110,7 +110,7 @@ Robustness and edge case tests for APSLF solver
          L, M = 2, 1
 
          for s in [1.0 + 0.0im, 0.5 + 0.5im, 0.0 + 1.0im, -0.5 + 0.3im, 2.0 - 1.0im]
-            result = APSLF.pade_eval(c, L, M; s = s)
+            result = AnalyticLoadFlow.pade_eval(c, L, M; s = s)
             @test isfinite(result) || isinf(result)
          end
       end
@@ -121,7 +121,7 @@ Robustness and edge case tests for APSLF solver
 
          for s in [1.0 + 1e-10im, 1.0 - 1e-10im, 1.0000001 + 0.0im]
             try
-               result = APSLF.pade_eval(c, L, M; s = s)
+               result = AnalyticLoadFlow.pade_eval(c, L, M; s = s)
                @test isfinite(result) || isinf(result)
             catch e
                @test isa(e, SingularException)
@@ -138,7 +138,7 @@ Robustness and edge case tests for APSLF solver
 
          results = Vector{Vector{ComplexF64}}(undef, 20)
          for i = 1:length(results)
-            V, _, _ = APSLF.apslf_pq(Y, S; order = 8)
+            V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 8)
             results[i] = V
          end
 
@@ -159,7 +159,7 @@ Robustness and edge case tests for APSLF solver
             S[i] = 0.1 * randn() + 0.05 * randn() * im
          end
 
-         V, Vcoeff, Wcoeff = APSLF.apslf_pq(Y, S; order = 15)
+         V, Vcoeff, Wcoeff = AnalyticLoadFlow.apslf_pq(Y, S; order = 15)
 
          @test length(V) == n
          @test all(isfinite.(V))
@@ -172,9 +172,9 @@ Robustness and edge case tests for APSLF solver
       end
    end
    @testset "Recoverable linear solve errors" begin
-      @test APSLF._is_recoverable_linear_solve_error(SingularException(0))
-      @test APSLF._is_recoverable_linear_solve_error(DomainError(1.0))
-      @test APSLF._is_recoverable_linear_solve_error(ArgumentError("bad"))
-      @test !APSLF._is_recoverable_linear_solve_error(BoundsError())
+      @test AnalyticLoadFlow._is_recoverable_linear_solve_error(SingularException(0))
+      @test AnalyticLoadFlow._is_recoverable_linear_solve_error(DomainError(1.0))
+      @test AnalyticLoadFlow._is_recoverable_linear_solve_error(ArgumentError("bad"))
+      @test !AnalyticLoadFlow._is_recoverable_linear_solve_error(BoundsError())
    end
 end

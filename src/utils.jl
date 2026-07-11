@@ -156,7 +156,7 @@ end
 Calculate maximum P and Q mismatches for given voltages on specified admittance matrix.
 """
 function max_mismatch_on_specY(spec, V::Vector{ComplexF64})
-   S = APSLF.calc_injections(spec.Y, V)
+   S = AnalyticLoadFlow.calc_injections(spec.Y, V)
    Pmis = real.(S) .- spec.Pspec
    Qmis = imag.(S) .- spec.Qspec
 
@@ -181,7 +181,7 @@ function max_mismatch(
    V::Vector{ComplexF64};
    slack::Int,
 )
-   Sinj = APSLF.calc_injections(Matrix{ComplexF64}(Y), V)
+   Sinj = AnalyticLoadFlow.calc_injections(Matrix{ComplexF64}(Y), V)
    Pcalc = real.(Sinj)
    Qcalc = imag.(Sinj)
 

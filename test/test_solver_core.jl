@@ -23,7 +23,7 @@
 using Test
 using LinearAlgebra
 using Logging
-using APSLF
+using AnalyticLoadFlow
 
 # Helper: isfinite for complex numbers
 _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
@@ -40,7 +40,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          # L=1,M=1 is reasonable, but can still produce inf/NaN depending on denominator.
          # So: we only assert it returns a Complex number OR throws a singularity-related error.
          try
-            result = APSLF.pade_eval(c, 1, 1; s = 1.0 + 0.0im)
+            result = AnalyticLoadFlow.pade_eval(c, 1, 1; s = 1.0 + 0.0im)
             @test isa(result, ComplexF64)
 
             # Do NOT force finiteness: your implementation may legitimately hit poles.
@@ -60,7 +60,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          c = ComplexF64[1.0 / factorial(n) for n = 0:N]
          L, M = 5, 5
 
-         result = APSLF.pade_eval(c, L, M; s = 1.0 + 0.0im)
+         result = AnalyticLoadFlow.pade_eval(c, L, M; s = 1.0 + 0.0im)
          exact = exp(1.0)
 
          # Only check "reasonable", not strict.
@@ -74,11 +74,11 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
 
          # Your pade_eval currently crashes for some parameter combos (BoundsError index 0).
          # Make that explicit: until fixed, we EXPECT a BoundsError for this case.
-         @test_throws BoundsError APSLF.pade_eval(c, 0, 2; s = 1.0 + 0.0im)
+         @test_throws BoundsError AnalyticLoadFlow.pade_eval(c, 0, 2; s = 1.0 + 0.0im)
 
          # Another mixed case: allow either a Complex result or a controlled exception.
          try
-            result = APSLF.pade_eval(c, 1, 2; s = 0.5 + 0.5im)
+            result = AnalyticLoadFlow.pade_eval(c, 1, 2; s = 0.5 + 0.5im)
             @test isa(result, ComplexF64)
          catch e
             @test isa(e, SingularException) || isa(e, BoundsError) || isa(e, DomainError) || isa(e, ArgumentError)
@@ -87,11 +87,11 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
 
       @testset "Error handling" begin
          c = ComplexF64[1, 1]
-         @test_throws AssertionError APSLF.pade_eval(c, 2, 2)
+         @test_throws AssertionError AnalyticLoadFlow.pade_eval(c, 2, 2)
 
          c_bad = ComplexF64[1.0+0.0im, NaN+NaN*im, 0.5+0.0im]
          err = try
-            APSLF.pade_eval(c_bad, 1, 1)
+            AnalyticLoadFlow.pade_eval(c_bad, 1, 1)
             nothing
          catch e
             e
@@ -103,7 +103,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
 
       @testset "Fallback helper for non-finite coefficients" begin
          c_bad = ComplexF64[1.0+0.0im, 0.25+0.0im, NaN+NaN*im, 9.0+0.0im]
-         result = APSLF._pade_eval_or_series(c_bad, 1, 1; s = 1.0 + 0.0im)
+         result = AnalyticLoadFlow._pade_eval_or_series(c_bad, 1, 1; s = 1.0 + 0.0im)
          @test result ≈ 1.25 + 0.0im atol = 1e-12
          @test _isfinite(result)
       end
@@ -118,7 +118,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
       Qmin = [-Inf, -Inf]
       Qmax = [Inf, Inf]
 
-      @test_throws APSLF.APSLFTimeoutError APSLF.solve_pf_apslf_with_pv_q_limits(
+      @test_throws AnalyticLoadFlow.APSLFTimeoutError AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
          Y,
          bustype,
          Pspec,
@@ -139,7 +139,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          Y = [2.0+1.0im -1.0-0.5im; -1.0-0.5im 2.0+1.0im]
          V = [1.0 + 0.0im, 0.95 - 0.1im]
 
-         S = APSLF.calc_injections(Y, V)
+         S = AnalyticLoadFlow.calc_injections(Y, V)
          @test length(S) == 2
          @test all(isa.(S, ComplexF64))
 
@@ -155,7 +155,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          Y = Y + 10 * I
 
          V = randn(ComplexF64, n)
-         S = APSLF.calc_injections(Y, V)
+         S = AnalyticLoadFlow.calc_injections(Y, V)
 
          @test length(S) == n
          @test all(_isfinite.(S))
@@ -165,7 +165,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          Y = [1.0+0.0im 0.0+0.0im; 0.0+0.0im 1.0+0.0im]
          V = [0.0 + 0.0im, 1.0 + 0.0im]
 
-         S = APSLF.calc_injections(Y, V)
+         S = AnalyticLoadFlow.calc_injections(Y, V)
 
          @test S[1] ≈ 0.0 + 0.0im
          @test _isfinite(S[2])
@@ -181,14 +181,14 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          1.0+0im -0.2+0im 0.06+0im
       ]
 
-      st = APSLF.stability_from_Vcoeff(Vcoeff; slack = 1, order = 2, critical_poles = :auto)
+      st = AnalyticLoadFlow.stability_from_Vcoeff(Vcoeff; slack = 1, order = 2, critical_poles = :auto)
       @test st.bus in (2, 3)
       @test isfinite(st.dmin)
       @test !isempty(st.critical)
       @test length(st.critical) == 2  # ceil(sqrt(2))
       @test all(st.critical[i].distance <= st.critical[i+1].distance for i = 1:(length(st.critical)-1))
 
-      st1 = APSLF.stability_from_Vcoeff(Vcoeff; slack = 1, order = 2, critical_poles = 1)
+      st1 = AnalyticLoadFlow.stability_from_Vcoeff(Vcoeff; slack = 1, order = 2, critical_poles = 1)
       @test length(st1.critical) == 1
       @test st1.critical[1].bus == st1.bus
       @test st1.critical[1].pole ≈ st1.pole
@@ -200,7 +200,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          Y = [2.0-1.0im -1.0+0.5im; -1.0+0.5im 1.5-0.8im]
          S = [0.0 + 0.0im, 0.5 + 0.2im]
 
-         V, Vcoeff, Wcoeff = APSLF.apslf_pq(Y, S; slack = 1, order = 10, use_pade = false)
+         V, Vcoeff, Wcoeff = AnalyticLoadFlow.apslf_pq(Y, S; slack = 1, order = 10, use_pade = false)
 
          @test length(V) == 2
          @test all(_isfinite.(V))
@@ -218,10 +218,10 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          Y = [3.0-2.0im -1.0+1.0im; -1.0+1.0im 2.0-1.0im]
          S = [0.0 + 0.0im, 0.3 + 0.1im]
 
-         V_base, _, _ = APSLF.apslf_pq(Y, S; order = 8)
+         V_base, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 8)
          V_depr_flat, _, _ =
-            @test_logs (:warn, r"`flatstart` is deprecated") APSLF.apslf_pq(Y, S; flatstart = false, order = 8)
-         V_depr_germ, _, _ = @test_logs (:warn, r"`V0_germ` is not a Newton start value") APSLF.apslf_pq(
+            @test_logs (:warn, r"`flatstart` is deprecated") AnalyticLoadFlow.apslf_pq(Y, S; flatstart = false, order = 8)
+         V_depr_germ, _, _ = @test_logs (:warn, r"`V0_germ` is not a Newton start value") AnalyticLoadFlow.apslf_pq(
             Y,
             S;
             V0_germ = ComplexF64[1.0+0im, 0.93+0.21im],
@@ -239,8 +239,8 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          Y = [2.0-1.0im -0.5+0.5im; -0.5+0.5im 1.5-0.7im]
          S = [0.0 + 0.0im, 0.2 + 0.1im]
 
-         V_pade, _, _ = APSLF.apslf_pq(Y, S; use_pade = true, order = 12)
-         V_series, _, _ = APSLF.apslf_pq(Y, S; use_pade = false, order = 12)
+         V_pade, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; use_pade = true, order = 12)
+         V_series, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; use_pade = false, order = 12)
 
          @test all(_isfinite.(V_pade))
          @test all(_isfinite.(V_series))
@@ -255,8 +255,8 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          ]
          S = [0.1 + 0.05im, 0.0 + 0.0im, 0.2 + 0.1im]
 
-         V1, _, _ = APSLF.apslf_pq(Y, S; slack = 1)
-         V2, _, _ = APSLF.apslf_pq(Y, S; slack = 2)
+         V1, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; slack = 1)
+         V2, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; slack = 2)
 
          @test V1[1] ≈ 1.0 + 0.0im
          @test V2[2] ≈ 1.0 + 0.0im
@@ -266,18 +266,18 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          coeffs_good = ComplexF64[1.0+0im, 1.0e-3+0im, 1.0e-6+0im, 1.0e-8+0im, 1.0e-10+0im, 1.0e-12+0im, 1.0e-13+0im]
          coeffs_bad = ComplexF64[1.0+0im, 0.8+0im, 0.7+0im, 0.65+0im, 0.6+0im, 0.58+0im, 0.56+0im]
 
-         opts_auto = APSLF.APSLFEvaluationOptions(mode = :auto)
-         res_good = APSLF.evaluate_series(coeffs_good, opts_auto)
+         opts_auto = AnalyticLoadFlow.APSLFEvaluationOptions(mode = :auto)
+         res_good = AnalyticLoadFlow.evaluate_series(coeffs_good, opts_auto)
          @test res_good.method_used == :taylor
          @test res_good.pade_triggered == false
          @test any(occursin("mode_requested     : auto"), res_good.logs)
 
-         res_bad = APSLF.evaluate_series(coeffs_bad, opts_auto)
+         res_bad = AnalyticLoadFlow.evaluate_series(coeffs_bad, opts_auto)
          @test res_bad.method_used == :pade
          @test res_bad.pade_triggered == true
          @test any(occursin("reason             : weak_taylor_convergence"), res_bad.logs)
 
-         res_forced_taylor = APSLF.evaluate_series(coeffs_bad, APSLF.APSLFEvaluationOptions(mode = :taylor))
+         res_forced_taylor = AnalyticLoadFlow.evaluate_series(coeffs_bad, AnalyticLoadFlow.APSLFEvaluationOptions(mode = :taylor))
          @test res_forced_taylor.method_used == :taylor
          @test res_forced_taylor.reason == :forced_taylor
       end
@@ -296,7 +296,7 @@ end
    Qmin = [-1.0, -0.05]
    Qmax = [1.0, 0.05]
 
-   res_enforced = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_enforced = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -309,14 +309,14 @@ end
       use_pade = true,
       nr_polish = true,
       enforce_q_limits = true,
-      evaluation_options = APSLF.APSLFEvaluationOptions(mode = :auto),
+      evaluation_options = AnalyticLoadFlow.APSLFEvaluationOptions(mode = :auto),
    )
    @test res_enforced.bustype[2] == :pq
    @test res_enforced.apslf_germ == :canonical_flat
    @test res_enforced.nr_polish_enabled == true
    @test res_enforced.nr_polish_start == :apslf_solution
 
-   res_delayed_switch = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_delayed_switch = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -338,7 +338,7 @@ end
    @test res_delayed_switch.q_limit_switch_deferred_count >= 2
    @test only(res_delayed_switch.switch_log).outer == 3
 
-   res_free = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_free = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -357,7 +357,7 @@ end
 
    Yfull_for_polish = copy(Y)
    Yfull_for_polish[2, 2] += 0.0 - 0.2im
-   res_alt_y_polish = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_alt_y_polish = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -373,13 +373,13 @@ end
       enforce_q_limits = false,
    )
    @test res_alt_y_polish.converged == true
-   @test norm(res_alt_y_polish.Sinj - APSLF.calc_injections(Yfull_for_polish, res_alt_y_polish.V)) < 1e-10
-   @test norm(res_alt_y_polish.Sinj - APSLF.calc_injections(Y, res_alt_y_polish.V)) > 1e-3
+   @test norm(res_alt_y_polish.Sinj - AnalyticLoadFlow.calc_injections(Yfull_for_polish, res_alt_y_polish.V)) < 1e-10
+   @test norm(res_alt_y_polish.Sinj - AnalyticLoadFlow.calc_injections(Y, res_alt_y_polish.V)) > 1e-3
 
    # In PQ mode, PV voltage error is zero for all-PQ systems. If an alternate
    # NR-polish Y-bus is supplied but the polish is intentionally damped to no-op,
    # convergence must still be gated on full-Y P/Q residuals.
-   res_pq_alt_y_unpolished = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_pq_alt_y_unpolished = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       [:slack, :pq],
       [0.0, 0.5],
@@ -398,7 +398,7 @@ end
       max_outer = 1,
    )
    @test res_pq_alt_y_unpolished.converged == false
-   maxP_alt, maxQ_alt = APSLF.max_mismatch(
+   maxP_alt, maxQ_alt = AnalyticLoadFlow.max_mismatch(
       Yfull_for_polish,
       res_pq_alt_y_unpolished.bustype,
       [0.0, 0.5],
@@ -408,7 +408,7 @@ end
    )
    @test max(maxP_alt, maxQ_alt) > 1e-3
 
-   res_no_polish = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_no_polish = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -423,7 +423,7 @@ end
       enforce_q_limits = false,
       max_outer = 1,
    )
-   res_rejected_polish = @test_logs (:warn, r"Rejecting NR polish") APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_rejected_polish = @test_logs (:warn, r"Rejecting NR polish") AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -452,7 +452,7 @@ end
    @test norm(res_rejected_polish.V - res_no_polish.V) < 1e-9
 
    res_damped_polish =
-      @test_logs min_level=Logging.Debug match_mode=:any (:debug, r"NR polish rejected damped trial") APSLF.solve_pf_apslf_with_pv_q_limits(
+      @test_logs min_level=Logging.Debug match_mode=:any (:debug, r"NR polish rejected damped trial") AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
          Y,
          bustype,
          Pspec,
@@ -474,7 +474,7 @@ end
    @test res_damped_polish.nr_polish_improved == true
    @test res_damped_polish.nr_polish_score_after < res_damped_polish.nr_polish_score_before
 
-   res_no_acceptable_step = @test_logs (:warn, r"no damping factor") APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_no_acceptable_step = @test_logs (:warn, r"no damping factor") AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -495,7 +495,7 @@ end
    @test res_no_acceptable_step.nr_polish_rejected == true
    @test norm(res_no_acceptable_step.V - res_no_polish.V) < 1e-9
 
-   res_polish_no_pv_pq_switch = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_polish_no_pv_pq_switch = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -513,7 +513,7 @@ end
    @test res_polish_no_pv_pq_switch.bustype[2] == :pv
    @test isempty(res_polish_no_pv_pq_switch.switch_log)
 
-   res_direct_taylor = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_direct_taylor = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -524,11 +524,11 @@ end
       inner = :direct_pv,
       order = 12,
       use_pade = true,
-      evaluation_options = APSLF.APSLFEvaluationOptions(mode = :taylor),
+      evaluation_options = AnalyticLoadFlow.APSLFEvaluationOptions(mode = :taylor),
       nr_polish = true,
       enforce_q_limits = false,
    )
-   res_direct_series = APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_direct_series = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -544,7 +544,7 @@ end
    )
    @test norm(res_direct_taylor.V - res_direct_series.V) < 1e-9
 
-   res_depr = @test_logs (:warn, r"`flatstart` is deprecated") APSLF.solve_pf_apslf_with_pv_q_limits(
+   res_depr = @test_logs (:warn, r"`flatstart` is deprecated") AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -575,7 +575,7 @@ end
    Qmin = [-1.0, 0.05]
    Qmax = [1.0, 0.05]
 
-   res = @test_logs (:warn, r"Qmin ≈ Qmax") (:warn, r"Demoting PV buses") APSLF.solve_pf_apslf_with_pv_q_limits(
+   res = @test_logs (:warn, r"Qmin ≈ Qmax") (:warn, r"Demoting PV buses") AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -606,7 +606,7 @@ end
    Qmin = [-1.0, -0.02]
    Qmax = [1.0, 0.02]
 
-   res = @test_logs min_level = Logging.Error APSLF.solve_pf_apslf_with_pv_q_limits(
+   res = @test_logs min_level = Logging.Error AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,

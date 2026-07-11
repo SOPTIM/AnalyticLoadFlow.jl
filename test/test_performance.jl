@@ -21,7 +21,7 @@
 # =============================================================================
 
 using Test
-using APSLF
+using AnalyticLoadFlow
 using LinearAlgebra
 using Random
 
@@ -66,11 +66,11 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
          S[i] = (0.2 + 0.3 * rand()) + (0.1 + 0.2 * rand())im
       end
 
-      APSLF.apslf_pq(Y, S; order = 16, use_pade = true) # warmup
+      AnalyticLoadFlow.apslf_pq(Y, S; order = 16, use_pade = true) # warmup
 
       V = nothing
       t = @elapsed begin
-         V, _, _ = APSLF.apslf_pq(Y, S; order = 16, use_pade = true)
+         V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 16, use_pade = true)
       end
 
       println("apslf_pq(n=$n, order=16, pade=true) elapsed = $(round(t * 1000, digits=3)) ms")
@@ -98,8 +98,8 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
 
       V_ref = nothing
       for order in orders
-         V_series, _, _ = APSLF.apslf_pq(Y, S; order = order, use_pade = false)
-         V_pade, _, _ = APSLF.apslf_pq(Y, S; order = order, use_pade = true)
+         V_series, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = order, use_pade = false)
+         V_pade, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = order, use_pade = true)
 
          if V_ref === nothing
             V_ref = V_pade
@@ -120,7 +120,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
       S = [0.0 + 0.0im, 1e-3 + 1e-4im]
 
       try
-         V, _, _ = APSLF.apslf_pq(Y, S; order = 20, use_pade = true)
+         V, _, _ = AnalyticLoadFlow.apslf_pq(Y, S; order = 20, use_pade = true)
          @test all(_isfinite.(V))
          @test abs(V[1] - 1.0) < 1e-10
       catch e
@@ -138,12 +138,12 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
       S = ComplexF64[i == 1 ? 0.0 + 0.0im : (0.1 * rand() + 0.05 * rand() * im) for i = 1:10]
 
       # warmup
-      APSLF.apslf_pq(Y, S; order = 12, use_pade = true)
+      AnalyticLoadFlow.apslf_pq(Y, S; order = 12, use_pade = true)
 
       # stable allocation measurement in Julia: @allocated
       bytes = @allocated begin
          for _ = 1:10
-            APSLF.apslf_pq(Y, S; order = 12, use_pade = true)
+            AnalyticLoadFlow.apslf_pq(Y, S; order = 12, use_pade = true)
          end
       end
 

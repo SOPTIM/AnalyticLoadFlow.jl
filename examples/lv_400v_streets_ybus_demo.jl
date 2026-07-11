@@ -20,7 +20,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # =============================================================================
-using APSLF
+using AnalyticLoadFlow
 
 old_autorun = get(ENV, "APSLF_SUITE_NO_AUTORUN", nothing)
 ENV["APSLF_SUITE_NO_AUTORUN"] = "1"
@@ -61,7 +61,7 @@ function main(args = ARGS)
    println("Synthetic 400 V low-voltage street-feeder APSLF example")
    println("Generated data only: not a real grid model.")
 
-   case = APSLF.demo_case_lv_400v_streets()
+   case = AnalyticLoadFlow.demo_case_lv_400v_streets()
    print_lv_network_diagram(case)
 
    run_demo(case; inner = :pq, order = 40, nr_polish = true)

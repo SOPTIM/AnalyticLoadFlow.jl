@@ -21,28 +21,28 @@
 # =============================================================================
 
 using Test
-using APSLF
+using AnalyticLoadFlow
 
 @testset "demo helper cases" begin
-   case = APSLF.demo_case_9bus()
+   case = AnalyticLoadFlow.demo_case_9bus()
    @test size(case.Y, 1) == 9
    @test size(case.Y, 2) == 9
    @test length(case.bustype) == 9
    @test case.slack == 1
 
    res = redirect_stdout(devnull) do
-      APSLF.solve_demo_case(case; inner = :pq)
+      AnalyticLoadFlow.solve_demo_case(case; inner = :pq)
    end
 
    @test all(isfinite, real.(res.V))
    @test all(isfinite, imag.(res.V))
 
-   maxP, maxQ = APSLF.compute_demo_mismatch(case, res)
+   maxP, maxQ = AnalyticLoadFlow.compute_demo_mismatch(case, res)
    @test isfinite(maxP)
    @test isfinite(maxQ)
    @test max(maxP, maxQ) < 1e-6
 
-   case_lv = APSLF.demo_case_lv_400v_streets()
+   case_lv = AnalyticLoadFlow.demo_case_lv_400v_streets()
    @test size(case_lv.Y) == (16, 16)
    @test length(case_lv.bustype) == 16
    @test case_lv.slack == 1
@@ -50,7 +50,7 @@ using APSLF
    @test all(case_lv.bustype[i] == :pq for i in eachindex(case_lv.bustype) if i != case_lv.slack)
 
    res_lv = redirect_stdout(devnull) do
-      APSLF.solve_demo_case(case_lv; inner = :pq, order = 40, nr_polish = true)
+      AnalyticLoadFlow.solve_demo_case(case_lv; inner = :pq, order = 40, nr_polish = true)
    end
 
    @test all(isfinite, real.(res_lv.V))
@@ -58,12 +58,12 @@ using APSLF
    @test minimum(abs.(res_lv.V)) >= 0.95
    @test maximum(abs.(res_lv.V)) <= 1.01
 
-   maxP_lv, maxQ_lv = APSLF.compute_demo_mismatch(case_lv, res_lv)
+   maxP_lv, maxQ_lv = AnalyticLoadFlow.compute_demo_mismatch(case_lv, res_lv)
    @test isfinite(maxP_lv)
    @test isfinite(maxQ_lv)
    @test max(maxP_lv, maxQ_lv) < 1e-5
 
-   case118 = APSLF.demo_case_118bus_synthetic()
+   case118 = AnalyticLoadFlow.demo_case_118bus_synthetic()
    @test size(case118.Y) == (118, 118)
    @test length(case118.bustype) == 118
    @test length(case118.Pspec) == 118
@@ -77,13 +77,13 @@ using APSLF
    @test count(bt -> bt == :pq, case118.bustype) >= 100
 
    res118 = redirect_stdout(devnull) do
-      APSLF.solve_demo_case(case118; inner = :pq, order = 40, nr_polish = true)
+      AnalyticLoadFlow.solve_demo_case(case118; inner = :pq, order = 40, nr_polish = true)
    end
 
    @test all(isfinite, real.(res118.V))
    @test all(isfinite, imag.(res118.V))
 
-   maxP118, maxQ118 = APSLF.compute_demo_mismatch(case118, res118)
+   maxP118, maxQ118 = AnalyticLoadFlow.compute_demo_mismatch(case118, res118)
    @test isfinite(maxP118)
    @test isfinite(maxQ118)
    @test max(maxP118, maxQ118) < 1e-5

@@ -7,7 +7,7 @@ Reviewer: Dr. K. F. Schäfer
 
 > *"This text was developed with technical assistance and subsequently reviewed and refined."*
 
-> **License notice:** The APSLF.jl repository, including source code and documentation, is made available under the Apache-2.0 license unless explicitly stated otherwise. Patent and trademark notes in this article are informational cautions only and are not legal advice.
+> **License notice:** The AnalyticLoadFlow.jl repository, including source code and documentation, is made available under the Apache-2.0 license unless explicitly stated otherwise. Patent and trademark notes in this article are informational cautions only and are not legal advice.
 
 ---
 
@@ -95,7 +95,7 @@ Reviewer: Dr. K. F. Schäfer
 
 
 ## Patent Notice
-> APSLF.jl source code and documentation are provided under the Apache-2.0 license unless explicitly stated otherwise. This repository license is separate from third-party patent and trademark questions.
+> AnalyticLoadFlow.jl source code and documentation are provided under the Apache-2.0 license unless explicitly stated otherwise. This repository license is separate from third-party patent and trademark questions.
 >
 > Patent and trademark notes in this article are informational cautions only and are not legal advice. Some HELM-related methods, extensions, names, or acronyms may be associated with third-party patents, trademarks, service marks, or other proprietary identifiers in certain jurisdictions.
 >
@@ -534,7 +534,7 @@ The magnitude condition is not holomorphic.
 In practice, the following has proven successful:
 
 1. **Inner solver:**
-   All non-slack buses are treated as PQ and solved with APSLF.
+   All non-slack buses are treated as PQ and solved with the APSLF method.
 
 2. **Outer control (outer loop):**
    For PV buses, $Q_i$ is adjusted such that:
