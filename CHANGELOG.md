@@ -1,7 +1,5 @@
 # Changelog
 
-Purpose: This changelog summarizes notable AnalyticLoadFlow.jl changes by released version.
-
 ## Version 0.9.14
 
 ### New Features
