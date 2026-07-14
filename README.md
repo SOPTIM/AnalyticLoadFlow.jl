@@ -144,6 +144,7 @@ res = solve_pf_apslf(
 )
 ```
 
+
 APSLF uses the canonical analytic germ `V(s=0)=1∠0`. This is not a user-selectable Newton-style start value. If Newton polish is enabled, it starts from the APSLF solution.
 
 ## Theory
