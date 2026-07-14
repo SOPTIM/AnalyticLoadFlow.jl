@@ -7,8 +7,14 @@
 [![GitHub release](https://img.shields.io/github/v/release/SOPTIM/AnalyticLoadFlow.jl)](https://github.com/SOPTIM/AnalyticLoadFlow.jl/releases)
 [![GitHub stars](https://img.shields.io/github/stars/SOPTIM/AnalyticLoadFlow.jl?style=social)](https://github.com/SOPTIM/AnalyticLoadFlow.jl)
 
+Julia package implementing the Analytic Power Series Load Flow:
 
-Compact Julia reference implementation of an analytic power-series based AC load-flow approach.
+- Sparse Y-Bus interface
+- PQ, PV and Slack buses
+- Padé evaluation
+- Optional Newton-Raphson polish
+- Open-source reference implementation
+
 
 ## Project Status
 
@@ -143,6 +149,14 @@ APSLF uses the canonical analytic germ `V(s=0)=1∠0`. This is not a user-select
 ## Theory
 
 See `docs/src/theorie-eng.md` for the theory article.
+
+## Citation
+
+If AnalyticLoadFlow.jl contributes to your research or publications, please cite the repository:
+
+Schmitz, U.
+AnalyticLoadFlow.jl
+https://github.com/SOPTIM/AnalyticLoadFlow.jl
 
 ## License 
 
