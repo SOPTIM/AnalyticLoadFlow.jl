@@ -35,13 +35,16 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
       n = 30
       Y = zeros(ComplexF64, n, n)
 
+      # small line-charging shunt per bus; the series admittances are stamped below
       for i = 1:n
-         Y[i, i] = (3.0 + rand()) - (1.5 + rand())im
+         Y[i, i] = 0.0 + 0.02im
       end
 
+      # Chain of lines keeps every bus connected (an isolated bus with only a shunt has
+      # no load-flow solution); random cross links add meshing.
       for i = 1:(n-1)
-         if rand() < 0.3
-            y_line = -(0.5 + rand()) + (0.2 + rand())im
+         if true
+            y_line = -(2.0 + rand()) + (10.0 + rand())im   # stiff line, |z| ≈ 0.1 pu
             Y[i, i+1] = y_line
             Y[i+1, i] = y_line
             Y[i, i] -= y_line
@@ -52,7 +55,7 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
       for i = 1:(n÷2)
          j = i + (n ÷ 2)
          if rand() < 0.2
-            y_line = -(0.3 + rand()) + (0.15 + rand())im
+            y_line = -(1.0 + rand()) + (5.0 + rand())im
             Y[i, j] = y_line
             Y[j, i] = y_line
             Y[i, i] -= y_line
@@ -62,8 +65,10 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
 
       S = zeros(ComplexF64, n)
       S[1] = 0.0 + 0.0im
+      # modest loads (negative injections) so that the 30-bus chain stays within a
+      # normal voltage band
       for i = 2:n
-         S[i] = (0.2 + 0.3 * rand()) + (0.1 + 0.2 * rand())im
+         S[i] = -(0.002 + 0.002 * rand()) - (0.001 + 0.001 * rand())im
       end
 
       AnalyticLoadFlow.apslf_pq(Y, S; order = 16, use_pade = true) # warmup
