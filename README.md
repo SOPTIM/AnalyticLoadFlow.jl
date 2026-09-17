@@ -15,6 +15,16 @@ Julia package implementing the Analytic Power Series Load Flow:
 - Optional Newton-Raphson polish
 - Open-source reference implementation
 
+## Workshop notebook (runs in the browser)
+
+No installation required, the workshop notebook runs on Google Colab:
+
+| Notebook | Open |
+|---|---|
+| **APSLF workshop**: the hand calculations of theory Section 7 (two-bus, four-bus) against the solver digit by digit, then the 9-bus case: series and Padé, germ variants, PV buses and Q limits, sparse path | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_apslf.ipynb) |
+
+See `notebooks/README.md`; the notebook is generated from the Literate source in `docs/lit/`.
+
 
 ## Project Status
 
