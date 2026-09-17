@@ -29,6 +29,7 @@ const _SUITE_FILES = (
    ("Performance and Benchmarks", "test_performance.jl"),
    ("Robustness and Edge Cases", "test_robustness.jl"),
    ("Minimal Y-Bus Example", "test_minimal_example.jl"),
+   ("Germ and Inner Solver", "test_germ_fix.jl"),
 )
 
 function _render_progress(done::Int, total::Int, label::AbstractString = "")

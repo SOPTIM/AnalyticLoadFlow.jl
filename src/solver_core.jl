@@ -859,6 +859,69 @@ function _handle_deprecated_apslf_germ_kwargs(kwargs; context::AbstractString, s
    return nothing
 end
 
+"""
+    apslf_germ(Y, nonslack, slack, Vslack, germ; F=nothing) -> Vector{ComplexF64}
+
+Return the APSLF germ `V^(0)` for the non-slack buses in the order of `nonslack`.
+
+- `germ = :flat`   → canonical flat germ `1∠0`. Exact at order 0 only if the
+  constant matrix has zero row sums (pure series network) and `Vslack = 1`.
+- `germ = :noload` → solution of the linear no-load problem
+  `Y_red V^(0) = -Y[red, slack] Vslack`. This is the exact `s = 0` state for
+  any `Y`: line shunts, off-nominal transformer ratios, phase shifters (PST)
+  and `Vslack ≠ 1` are all absorbed into the germ, and the recursion runs
+  unchanged with a non-uniform `W^(0) = 1 ./ V^(0)` (theory Section 6.5,
+  variant 2). Costs one additional solve with the same factorization.
+- `germ = :deviation` → flat germ `Vslack·1` combined with the deviation
+  embedding `Y(s) = Y0 + s (Y - Y0)`, `Y0 = Y - diag(Y·1)` (theory Section
+  6.5, variant 1). `Y0` has zero row sums by construction, so the constant
+  germ is exact at order 0 for any `Y`, and the deviation `diag(Y·1)` (bus
+  shunts, transformer and PST row sums) is ramped up with `s` on the
+  right-hand side of the recursion. The germ stays at nominal voltage even
+  when the no-load state is far from the operating point (large networks
+  with strong Ferranti rise), which usually gives the larger convergence
+  radius of the two variants.
+
+`F` may be a factorization of `Y[nonslack, nonslack]` to avoid refactoring.
+"""
+function apslf_germ(
+   Y::AbstractMatrix{ComplexF64},
+   nonslack::Vector{Int},
+   slack::Int,
+   Vslack::ComplexF64,
+   germ::Symbol;
+   F = nothing,
+)
+   germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
+   n = length(nonslack)
+   germ == :flat && return fill(1.0 + 0.0im, n)
+   germ == :deviation && return fill(Vslack, n)
+   Yslack = Vector{ComplexF64}(Y[nonslack, slack])
+   return apslf_noload_germ(F === nothing ? lu(issparse(Y) ? sparse(Y[nonslack, nonslack]) : Matrix(Y[nonslack, nonslack])) : F, Yslack, Vslack)
+end
+
+"""
+    apslf_row_sums(Y) -> Vector{ComplexF64}
+
+Row sums `Y·1` of the bus admittance matrix; the diagonal deviation of the
+`:deviation` embedding (see [`apslf_germ`](@ref)).
+"""
+apslf_row_sums(Y::AbstractMatrix{ComplexF64}) = Vector{ComplexF64}(vec(sum(Y, dims = 2)))
+
+"""
+    apslf_noload_germ(F, Yslack, Vslack) -> Vector{ComplexF64}
+
+No-load germ from a factorization `F` of the reduced matrix and the reduced
+slack column `Yslack = Y[nonslack, slack]`: solves `Y_red V0 = -Yslack * Vslack`.
+"""
+function apslf_noload_germ(F, Yslack::Vector{ComplexF64}, Vslack::ComplexF64)
+   V0 = F \ (-Yslack .* Vslack)
+   all(isfinite, V0) || error("APSLF no-load germ is not finite; the reduced Y-bus may be singular.")
+   vmin = minimum(abs, V0)
+   vmin > 1e-6 || error("APSLF no-load germ has a (near-)zero bus voltage (min |V0| = $(vmin)); W = 1/V is undefined.")
+   return V0
+end
+
 function _warn_degenerate_q_limits(
    bustype::Vector{Symbol},
    Qmin::Vector{Float64},
@@ -939,7 +1002,7 @@ Coefficient recursion (standard PQ embedding):
 Let `V(s) = Σ V^(n) s^n` and `W(s) = 1/V(s) = Σ W^(n) s^n`.
 
 For `n ≥ 1`:
-`Y_red * V_red^(n) = conj(S_red) .* W_red^(n-1)`
+`Y_red * V_red^(n) = conj(S_red) .* conj(W_red^(n-1))`
 
 where "red" excludes the slack bus.
 
@@ -958,6 +1021,7 @@ function apslf_pq(
    Vslack::ComplexF64 = 1.0 + 0.0im,
    order::Int = 24,
    use_pade::Bool = true,
+   germ::Symbol = :deviation,
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    timeout_check = nothing,
    kwargs...,
@@ -973,7 +1037,10 @@ function apslf_pq(
 
    # Reduced linear system for coefficient solves:
    # If Y is sparse, keep the reduced matrix sparse (UMFPACK LU)
-   Yred = issparse(Y) ? sparse(Y[pq, pq]) : Matrix(Y[pq, pq])  # GEÄNDERT
+   Yred = issparse(Y) ? sparse(Y[pq, pq]) : Matrix(Y[pq, pq])
+   # :deviation embedding: constant matrix Y0 = Y - diag(Y·1), deviation d = Y·1 on the RHS
+   drow = germ == :deviation ? apslf_row_sums(Y)[pq] : ComplexF64[]
+   germ == :deviation && (Yred = Yred - Diagonal(drow))
    F = lu(Yred)
 
    # Coefficient storage (reduced ordering)
@@ -981,8 +1048,8 @@ function apslf_pq(
    Vcoeff = zeros(ComplexF64, npq, order + 1)
    Wcoeff = zeros(ComplexF64, npq, order + 1)
 
-   # ---- Canonical APSLF germ V^(0) = 1∠0 for all non-slack buses.
-   V0 = fill(1.0 + 0.0im, npq)
+   # ---- APSLF germ V^(0): canonical flat 1∠0, or the no-load solution (germ=:noload).
+   V0 = apslf_germ(Y, pq, slack, Vslack, germ; F = F)
 
    Vcoeff[:, 1] .= V0
    Wcoeff[:, 1] .= 1.0 ./ V0
@@ -993,9 +1060,10 @@ function apslf_pq(
    for n = 1:order
       _maybe_check_timeout(timeout_check, :apslf_pq_order)
       # At order n:
-      #   rhs = conj(S) .* W^(n-1)
+      #   rhs = conj(S) .* conj(W^(n-1))   (reflection condition, theory Sec. 2.4/4.2)
       # Note: Wcoeff[:, n] corresponds to W^(n-1) due to shift.
-      rhs = Sstar .* Wcoeff[:, n]
+      rhs = Sstar .* conj.(Wcoeff[:, n])
+      germ == :deviation && (rhs .-= drow .* @view(Vcoeff[:, n]))   # - d .* V^(n-1)
       Vcoeff[:, n+1] = F \ rhs
 
       # Inverse series recursion:
@@ -1072,7 +1140,7 @@ when solving multiple APSLF PQ power flows with the same system structure:
 # Mathematical Context
 The workspace supports the APSLF PQ recursion:
 ```
-Y_red * V^(n) = conj(S_red) .* W^(n-1)    for n = 1, 2, ..., order
+Y_red * V^(n) = conj(S_red) .* conj(W^(n-1))    for n = 1, 2, ..., order
 ```
 
 where:
@@ -1126,6 +1194,9 @@ mutable struct APSLFPQWorkspace{TY<:AbstractMatrix{ComplexF64},TF<:LinearAlgebra
    npq::Int
    Yred::TY
    F::TF
+   Yslack::Vector{ComplexF64}   # Y[pq, slack], needed for the no-load germ
+   germ::Symbol                 # embedding the factorization F was built for
+   drow::Vector{ComplexF64}     # (Y·1)[pq] for the :deviation embedding, empty otherwise
 
    Vcoeff::Matrix{ComplexF64}
    Wcoeff::Matrix{ComplexF64}
@@ -1182,7 +1253,7 @@ Eliminates expensive repeated operations when solving multiple APSLF PQ power fl
 # APSLF Recursion Support
 The workspace enables the standard PQ recursion:
 ```
-Y_red * V^(n) = conj(S_red) .* W^(n-1)    for n = 1, 2, ..., order
+Y_red * V^(n) = conj(S_red) .* conj(W^(n-1))    for n = 1, 2, ..., order
 ```
 
 where the inverse series follows: `W^(n) = -(1/V^(0)) * Σ_{m=1}^n V^(m) W^(n-m)`
@@ -1214,11 +1285,13 @@ function build_apslf_pq_workspace(
    order::Int = 24,
    use_sparse::Union{Bool,Symbol} = :auto,
    sparse_nbus_min::Int = 110,
+   germ::Symbol = :deviation,
 )
    nbus = size(Y, 1)
    @assert size(Y, 2) == nbus
    @assert 1 <= slack <= nbus
    @assert order >= 1
+   germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
 
    Yuse = maybe_sparse_Y(Y; nbus = nbus, use_sparse = use_sparse, sparse_nbus_min = sparse_nbus_min)
 
@@ -1226,6 +1299,8 @@ function build_apslf_pq_workspace(
    npq = length(pq)
 
    Yred = issparse(Yuse) ? sparse(Yuse[pq, pq]) : Matrix(Yuse[pq, pq])
+   drow = germ == :deviation ? apslf_row_sums(Yuse)[pq] : ComplexF64[]
+   germ == :deviation && (Yred = Yred - Diagonal(drow))
    F = lu(Yred)
 
    Vcoeff = zeros(ComplexF64, npq, order + 1)
@@ -1234,7 +1309,9 @@ function build_apslf_pq_workspace(
    Sstar = zeros(ComplexF64, npq)
    Vfull = zeros(ComplexF64, nbus)
 
-   return APSLFPQWorkspace(nbus, slack, order, pq, npq, Yred, F, Vcoeff, Wcoeff, rhs, Sstar, Vfull)
+   Yslack = Vector{ComplexF64}(Yuse[pq, slack])
+
+   return APSLFPQWorkspace(nbus, slack, order, pq, npq, Yred, F, Yslack, germ, drow, Vcoeff, Wcoeff, rhs, Sstar, Vfull)
 end
 
 """
@@ -1252,11 +1329,17 @@ function apslf_pq_solve!(
    S::Vector{ComplexF64};
    Vslack::ComplexF64 = 1.0 + 0.0im,
    use_pade::Bool = true,
+   germ::Union{Nothing,Symbol} = nothing,
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    timeout_check = nothing,
    kwargs...,
 )
    _handle_deprecated_apslf_germ_kwargs(kwargs; context = "apslf_pq_solve!")
+   # The factorization in the workspace belongs to one embedding; :flat and :noload share it.
+   germ = germ === nothing ? ws.germ : germ
+   if (germ == :deviation) != (ws.germ == :deviation)
+      throw(ArgumentError("workspace was built with germ=:$(ws.germ); rebuild it for germ=:$(germ)"))
+   end
 
    @assert length(S) == ws.nbus
    @assert ws.order >= 1
@@ -1270,9 +1353,19 @@ function apslf_pq_solve!(
    rhs = ws.rhs
    Sstar = ws.Sstar
 
-   # ---- Canonical APSLF germ V^(0) = 1∠0
-   @inbounds for k = 1:npq
-      Vcoeff[k, 1] = 1.0 + 0.0im
+   # ---- APSLF germ V^(0): canonical flat 1∠0, or the no-load solution (germ=:noload)
+   if germ == :flat
+      @inbounds for k = 1:npq
+         Vcoeff[k, 1] = 1.0 + 0.0im
+      end
+   elseif germ == :noload
+      Vcoeff[:, 1] .= apslf_noload_germ(ws.F, ws.Yslack, Vslack)
+   elseif germ == :deviation
+      @inbounds for k = 1:npq
+         Vcoeff[k, 1] = Vslack
+      end
+   else
+      throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
    end
 
    # W^(0) = 1/V^(0)
@@ -1288,9 +1381,14 @@ function apslf_pq_solve!(
    # Recursion
    for n = 1:order
       _maybe_check_timeout(timeout_check, :apslf_pq_order)
-      # rhs := Sstar .* W^(n-1)  (Wcoeff[:, n] is W^(n-1))
+      # rhs := Sstar .* conj(W^(n-1))  (Wcoeff[:, n] is W^(n-1); reflection condition)
       @inbounds for k = 1:npq
-         rhs[k] = Sstar[k] * Wcoeff[k, n]
+         rhs[k] = Sstar[k] * conj(Wcoeff[k, n])
+      end
+      if germ == :deviation
+         @inbounds for k = 1:npq
+            rhs[k] -= ws.drow[k] * Vcoeff[k, n]   # - d .* V^(n-1)
+         end
       end
 
       # Solve Yred * V^(n) = rhs  (store into column n+1)
@@ -2144,6 +2242,7 @@ function apslf_pf_pv_direct_sparse(
    Vslack::ComplexF64 = 1.0 + 0.0im,
    order::Int = 24,
    use_pade::Bool = true,
+   germ::Symbol = :deviation,
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    debug::Bool = false,
    debug_every::Int = 1,
@@ -2190,9 +2289,12 @@ function apslf_pf_pv_direct_sparse(
    Wcoeff = zeros(ComplexF64, nbus, order + 1)   # col 1 => W^(0)
    Qcoeff = zeros(Float64, npv, order)           # col n => Q^(n-1)  (SHIFTED)
 
-   # Germ (forced flat germ)
+   # Germ: canonical flat 1∠0 (germ=:flat) or no-load solution (germ=:noload)
    V0 = fill(1.0 + 0.0im, nbus)
+   V0[nonslack] .= apslf_germ(Yuse, nonslack, slack, Vslack, germ)
    V0[slack] = Vslack
+   # :deviation embedding: constant matrix Y0 = Y - diag(d), d = Y·1 ramped with s on the RHS
+   drow = germ == :deviation ? apslf_row_sums(Yuse) : zeros(ComplexF64, nbus)
    Vcoeff[:, 1] .= V0
    Wcoeff[:, 1] .= 1.0 ./ V0
    Wcoeff[slack, 1] = 1.0 / Vslack
@@ -2261,6 +2363,20 @@ function apslf_pf_pv_direct_sparse(
       end
    end
 
+   # :deviation embedding: subtract the row sums d from the diagonal (Y0 = Y - diag(d))
+   if germ == :deviation
+      @inbounds for (ti, i) in enumerate(nonslack)
+         g = real(drow[i])
+         b = imag(drow[i])
+         r_re = 2 * (ti - 1) + 1
+         r_im = r_re + 1
+         push!(Iidx, r_re); push!(Jidx, ti); push!(Vals, -g)
+         push!(Iidx, r_re); push!(Jidx, nn + ti); push!(Vals, b)
+         push!(Iidx, r_im); push!(Jidx, ti); push!(Vals, -b)
+         push!(Iidx, r_im); push!(Jidx, nn + ti); push!(Vals, -g)
+      end
+   end
+
    # PV coupling term on LHS for PV equation buses i:
    #   (-j) Q^(n-1)_i * conj(W^(0)_i) moved to LHS
    #   contributes to the network equation rows at bus i, column c_q
@@ -2274,13 +2390,14 @@ function apslf_pf_pv_direct_sparse(
       r_re = 2 * (ti - 1) + 1
       r_im = r_re + 1
 
-      # (-j)Q*W0* = Q*imag(W0*) + j*(-Q*real(W0*))
+      # RHS term (-j) Q^(n-1) W0* moved to the LHS: (+j)Q*W0* = -Q*imag(W0*) + j*(Q*real(W0*))
+      # (sign consistent with the known lower-order Q terms on the RHS)
       push!(Iidx, r_re)
       push!(Jidx, c_q)
-      push!(Vals, imag(W0c[i]))
+      push!(Vals, -imag(W0c[i]))
       push!(Iidx, r_im)
       push!(Jidx, c_q)
-      push!(Vals, -real(W0c[i]))
+      push!(Vals, real(W0c[i]))
    end
 
    # PV magnitude constraints rows:
@@ -2308,7 +2425,7 @@ function apslf_pf_pv_direct_sparse(
    function dbg_print_header()
       println("\n[apslf_pf_pv_direct_sparse] DEBUG")
       println(
-         "  nbus=$(nbus), slack=$(slack), npv=$(npv), order=$(order), use_pade=$(use_pade), germ=canonical_flat(V(s=0)=1∠0)",
+         "  nbus=$(nbus), slack=$(slack), npv=$(npv), order=$(order), use_pade=$(use_pade), germ=$(germ)",
       )
       println("  Asys size = $(size(Asys)), nnz(Asys)=$(nnz(Asys))")
       println("  columns: n | ||rhs||₂ | max|Vn| | ||Vn||₂ | max|Q_{n-1}| | ||Q_{n-1}||₂")
@@ -2381,6 +2498,7 @@ function apslf_pf_pv_direct_sparse(
 
          if _is_pq(bustype[i])
             f = Sstar[i] * Wc_prev[i]
+            germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2389,6 +2507,7 @@ function apslf_pf_pv_direct_sparse(
             @assert kpv > 0
             acc = conv_Q_Wc_known_shifted(n, kpv, i)
             f = Pspec[i] * Wc_prev[i] - 1.0im * acc
+            germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2547,6 +2666,7 @@ function apslf_pf_pv_direct(
    Vslack::ComplexF64 = 1.0 + 0.0im,
    order::Int = 24,
    use_pade::Bool = true,
+   germ::Symbol = :deviation,
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    debug::Bool = false,
    debug_every::Int = 1,
@@ -2594,14 +2714,16 @@ function apslf_pf_pv_direct(
    Qcoeff = zeros(Float64, npv, order)        # col 1 => Q⁽0⁾  (SHIFTED: stores Q⁽n-1⁾ at step n)
 
    # -----------------------
-   # Germ (forced flat germ)
+   # Germ: canonical flat 1∠0 (germ=:flat) or no-load solution (germ=:noload)
    #
-   # V^(0) = 1 at all buses, except slack set to Vslack.
-   # W^(0) = 1/V^(0).
-   # For PV: Q^(0) = 0.
+   # V^(0) = 1 at all buses (flat) or the no-load voltage profile (noload),
+   # slack set to Vslack. W^(0) = 1/V^(0). For PV: Q^(0) = 0.
    # -----------------------
    V0 = fill(1.0 + 0.0im, nbus)
+   V0[nonslack] .= apslf_germ(Yuse, nonslack, slack, Vslack, germ)
    V0[slack] = Vslack
+   # :deviation embedding: constant matrix Y0 = Y - diag(d), d = Y·1 ramped with s on the RHS
+   drow = germ == :deviation ? apslf_row_sums(Yuse) : zeros(ComplexF64, nbus)
    Vcoeff[:, 1] .= V0
    Wcoeff[:, 1] .= 1.0 ./ V0
    Wcoeff[slack, 1] = 1.0 / Vslack
@@ -2648,6 +2770,7 @@ function apslf_pf_pv_direct(
          c_vi = nn + col_t
 
          yik = Yuse[i, kbus]
+         (germ == :deviation && kbus == i) && (yik -= drow[i])   # Y0 = Y - diag(d)
          g = real(yik)
          b = imag(yik)
 
@@ -2658,14 +2781,17 @@ function apslf_pf_pv_direct(
          Asys[r_im, c_vi] += g
       end
 
-      # PV coupling: (-j) Q^(n-1) * conj(W^(0)) on LHS.
-      # (-j)QW0* = Q*imag(W0*)  + j*(-Q*real(W0*))
+      # PV coupling: the RHS term (-j) Q^(n-1) * conj(W^(0)) moved to the LHS
+      # becomes (+j) Q W0*, with (+j)QW0* = -Q*imag(W0*) + j*(Q*real(W0*)).
+      # The sign must match the known lower-order Q terms on the RHS
+      # (-j Σ Q^(m) conj(W^(n-1-m))); with the opposite sign the recursion is
+      # inconsistent from order 2 on and the PV active power is not met.
       if _is_pv(bustype[i])
          pvk = pv_pos[i]
          @assert pvk > 0
          c_q = 2 * nn + pvk
-         Asys[r_re, c_q] += imag(W0c[i])
-         Asys[r_im, c_q] += -real(W0c[i])
+         Asys[r_re, c_q] += -imag(W0c[i])
+         Asys[r_im, c_q] += real(W0c[i])
       end
    end
 
@@ -2689,7 +2815,7 @@ function apslf_pf_pv_direct(
    function dbg_print_header()
       println("\n[apslf_pf_pv_direct] DEBUG")
       println(
-         "  nbus=$(nbus), slack=$(slack), npv=$(npv), order=$(order), use_pade=$(use_pade), germ=canonical_flat(V(s=0)=1∠0)",
+         "  nbus=$(nbus), slack=$(slack), npv=$(npv), order=$(order), use_pade=$(use_pade), germ=$(germ)",
       )
       println("  Asys size = $(size(Asys))")
       println("  columns: n | ||rhs||₂ | max|Vn| | ||Vn||₂ | max|Q_{n-1}| | ||Q_{n-1}||₂")
@@ -2779,6 +2905,7 @@ function apslf_pf_pv_direct(
             # PQ coefficient equation:
             #   (Y V^(n))_i = conj(S_i) * conj(W_i^(n-1))
             f = Sstar[i] * Wc_prev[i]
+            germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2793,6 +2920,7 @@ function apslf_pf_pv_direct(
             acc = conv_Q_Wc_known_shifted(n, kpv, i)
 
             f = Pspec[i] * Wc_prev[i] - 1.0im * acc
+            germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2957,10 +3085,22 @@ Convergence summary:
 - For `inner=:direct_pv`: converged if mismatches (`maxP/maxQpq`) are below tolerances
   and no switching occurs.
 
-APSLF germ semantics:
-- APSLF always uses the canonical analytic germ `V(s=0)=1∠0`.
-- This is not a Newton-Raphson start value and is not user-configurable.
-- Legacy `flatstart`/`V0_germ` kwargs are deprecated and ignored with a warning.
+APSLF germ semantics (`germ` keyword):
+- `germ = :flat` (default): canonical analytic germ `V(s=0)=1∠0`. Exact at
+  order 0 only for a pure series network with `Vslack = 1`; with line shunts,
+  transformer taps or phase shifters the result needs the NR polish.
+- `germ = :noload`: the germ is the linear no-load solution of the
+  full Y-bus (theory Section 6.5, variant 2). Exact at order 0 for shunts,
+  off-nominal ratios, phase-shifting transformers and `Vslack ≠ 1`; the pure
+  APSLF result is then a load-flow solution without NR polish.
+- `germ = :deviation` (default): flat germ `Vslack·1` with the deviation
+  embedding `Y(s) = Y0 + s (Y - Y0)`, `Y0 = Y - diag(Y·1)` (theory Section
+  6.5, variant 1). Also exact, but with a different path in `s`; it keeps the
+  germ at nominal voltage and is the robust choice for large networks whose
+  no-load state is far from the operating point (PEGASE cases converge with
+  `:deviation` and diverge with `:noload`).
+- The germ is not a Newton-Raphson start value. Legacy `flatstart`/`V0_germ`
+  kwargs are deprecated and ignored with a warning.
 
 Optional NR polish:
 After each inner solve, an NR refinement may be applied to the final `V`
@@ -2982,6 +3122,7 @@ function solve_pf_apslf_with_pv_q_limits(
    Vslack::Union{Nothing,ComplexF64} = nothing,
    order::Int = 24,
    use_pade::Bool = false,
+   germ::Symbol = :deviation,    # :deviation | :noload | :flat
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    inner::Symbol = :pq,          # :pq | :direct_pv
    max_outer::Int = 30,
@@ -2994,6 +3135,7 @@ function solve_pf_apslf_with_pv_q_limits(
    q_limit_switch_require_stable::Bool = false,
    q_limit_switch_stability_tol::Float64 = 1e-4,
    pv_step0::Float64 = 0.05,
+   pv_secant_damping::Float64 = 1.0,
    nr_polish::Bool = true,
    nr_polish_Y::Union{Nothing,AbstractMatrix{ComplexF64}} = nothing,
    nr_q_polish::Bool = false,
@@ -3041,6 +3183,7 @@ function solve_pf_apslf_with_pv_q_limits(
       @assert size(nr_polish_Y, 1) == nbus && size(nr_polish_Y, 2) == nbus
    end
    @assert inner in (:pq, :direct_pv, :direct_pv_sparse) "inner must be :pq | :direct_pv | :direct_pv_sparse"
+   germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
    qdeg_tol >= 0.0 || throw(ArgumentError("qdeg_tol must be non-negative."))
    _warn_degenerate_q_limits(bustype, Qmin, Qmax; atol = qdeg_tol)
    Yuse = maybe_sparse_Y(Y; nbus = nbus, use_sparse = use_sparse, sparse_nbus_min = sparse_nbus_min)
@@ -3080,6 +3223,7 @@ function solve_pf_apslf_with_pv_q_limits(
          order = order,
          use_sparse = false, # already applied policy above, TODO: check comment.
          sparse_nbus_min = sparse_nbus_min,
+         germ = germ,
       ) : nothing
 
    # -----------------------
@@ -3291,6 +3435,7 @@ function solve_pf_apslf_with_pv_q_limits(
             S;
             Vslack = Vsl,
             use_pade = use_pade,
+            germ = germ,
             evaluation_options = evaluation_options,
             timeout_check = check_solver_timeout!,
          )
@@ -3323,6 +3468,7 @@ function solve_pf_apslf_with_pv_q_limits(
             Vslack = Vsl,
             order = order,
             use_pade = use_pade,
+            germ = germ,
             evaluation_options = evaluation_options,
             debug = false,
             self_check = false,
@@ -3346,6 +3492,7 @@ function solve_pf_apslf_with_pv_q_limits(
             Vslack = Vsl,
             order = order,
             use_pade = use_pade,
+            germ = germ,
             evaluation_options = evaluation_options,
             debug = false,
             self_check = false,
@@ -3441,7 +3588,7 @@ function solve_pf_apslf_with_pv_q_limits(
          switch_log = copy(all_switch_log),
          converged = converged,
          outer_iters = outer_iters,
-         apslf_germ = :canonical_flat,
+         apslf_germ = germ,
          nr_polish_enabled = nr_polish,
          nr_polish_start = nr_polish ? :apslf_solution : :none,
          nr_polish_rejected = nr_polish_rejected[],
@@ -3473,7 +3620,11 @@ function solve_pf_apslf_with_pv_q_limits(
 
       # Step A: enforce |V| at PV buses by adjusting Q (secant per PV) for inner=:pq only
       if inner == :pq
-         pv_secant_damping = nbus >= 200 ? 0.25 : 0.5
+         # Secant step damping (kwarg). The inner APSLF solve is exact for the
+         # given Q, so the undamped secant (1.0) converges superlinearly; a
+         # damped value (e.g. 0.5) only slows convergence and can leave the PV
+         # |V| error above vtol within max_pv_iter.
+         pv_secant_damping > 0.0 || throw(ArgumentError("pv_secant_damping must be positive."))
          q_probe_margin = 0.1
          overflow_f_limit = 1e6
          for i in pv_buses

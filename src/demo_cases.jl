@@ -93,7 +93,7 @@ end
 
 """
     solve_demo_case(case; inner=:pq, order=40, use_pade=true, nr_polish=true,
-                    verbose=0, max_outer=20, return_coeffs=true)
+                    verbose=0, max_outer=20, return_coeffs=true, germ=:deviation, kwargs...)
 
 Call APSLF for a case NamedTuple that follows the demo data contract.
 """
@@ -106,6 +106,8 @@ function solve_demo_case(
    verbose::Int = 0,
    max_outer::Int = 20,
    return_coeffs::Bool = true,
+   germ::Symbol = :deviation,
+   kwargs...,
 )
    return solve_pf_apslf_with_pv_q_limits(
       Matrix{ComplexF64}(case.Y),
@@ -124,6 +126,8 @@ function solve_demo_case(
       nr_polish = nr_polish,
       verbose = verbose,
       return_coeffs = return_coeffs,
+      germ = germ,
+      kwargs...,
    )
 end
 
