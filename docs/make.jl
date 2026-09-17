@@ -67,6 +67,7 @@ pages = [
    "Theory" => "theorie-eng.md",
    "API" => "api.md",
    "Example" => "minimal_ybus_demo.md",
+   "Workshop notebook" => "generated/workshop_apslf.md",
    "Changelog" => "CHANGELOG.md",
 ]
 
