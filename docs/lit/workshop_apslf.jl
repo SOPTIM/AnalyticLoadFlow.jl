@@ -239,7 +239,10 @@ end
 # agree with the hand recursion.
 
 Y2 = [y -y; -y y+ysh2]              # full 2×2 Y-bus, capacitor in the diagonal of bus 2
-S = [0.0im, S2]                     # injections; the slack entry is ignored
+## Injections, one entry per bus, same order as the rows of Y2.
+## Bus 1 is the slack: its voltage is fixed and its power follows from the network,
+## so the entry is never read (0 is a placeholder). Bus 2 carries the load S2 = -0.5 - j0.15.
+S = [0.0im, S2]                     # = [0.0 + 0.0im, -0.5 - 0.15im]
 
 ## V   : voltage at s = 1 for both buses
 ## Vc  : coefficients V^(n) of bus 2, columns are the orders 0..10
@@ -352,7 +355,7 @@ lines = [
 branches = NTuple{5,Float64}[(i, j, real(inv(yik)), imag(inv(yik)), b) for (i, j, yik, b) in lines]
 
 Y4 = A.build_ybus_from_branches(4, branches)       # dense 4×4 physical Y-bus
-S4 = ComplexF64[0, -0.4 - 0.15im, -0.5 - 0.175im, -0.3 - 0.1im]   # injections, slack entry unused
+S4 = ComplexF64[0, -0.4 - 0.15im, -0.5 - 0.175im, -0.3 - 0.1im]   # injections per bus; bus 1 is the slack, its entry is a placeholder
 
 show_matrix("physical Y-bus (Section 7.2):", Y4)
 println()
