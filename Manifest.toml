@@ -2,10 +2,10 @@
 
 julia_version = "1.13.0"
 manifest_format = "2.1"
-project_hash = "acfe7f790c8ec9582a7c6a064b0000f03ba88053"
+project_hash = "5ab8264bbe9c3301a419a3f664eb3d42d69f6f21"
 
 [[deps.AnalyticLoadFlow]]
-deps = ["LinearAlgebra", "Logging", "Printf", "SparseArrays"]
+deps = ["LinearAlgebra", "Logging", "PrecompileTools", "Printf", "SparseArrays"]
 path = "."
 uuid = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 version = "0.9.15"
@@ -18,6 +18,11 @@ version = "1.11.0"
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "1.5.5+2"
+
+[[deps.Dates]]
+deps = ["Printf"]
+uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
+version = "1.11.0"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -36,6 +41,20 @@ version = "1.11.0"
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
 uuid = "4536629a-c528-5b80-bd46-f80d51c5b363"
 version = "0.3.30+0"
+
+[[deps.PrecompileTools]]
+deps = ["Preferences"]
+git-tree-sha1 = "edbeefc7a4889f528644251bdb5fc9ab5348bc2c"
+registries = "General"
+uuid = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+version = "1.3.4"
+
+[[deps.Preferences]]
+deps = ["TOML"]
+git-tree-sha1 = "5005266de4bfe50e53ff44a5cb5c540b6e47a254"
+registries = "General"
+uuid = "21216c6a-2e73-6563-6e65-726566657250"
+version = "1.6.0"
 
 [[deps.Printf]]
 deps = ["Unicode"]
@@ -65,6 +84,11 @@ deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl", "libblastrampoline
 uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 version = "7.10.1+0"
 
+[[deps.TOML]]
+deps = ["Dates"]
+uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+version = "1.0.3"
+
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 version = "1.11.0"
@@ -73,3 +97,7 @@ version = "1.11.0"
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850b90-86db-534c-a0d3-1478176c7d93"
 version = "5.15.0+0"
+
+[registries.General]
+url = "https://github.com/JuliaRegistries/General.git"
+uuid = "23338594-aafe-5451-b93e-139f81909106"

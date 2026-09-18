@@ -79,4 +79,7 @@ export
    solve_demo_case,
    compute_demo_mismatch
 
+
+include("precompile.jl")
+
 end

@@ -2,6 +2,9 @@
 
 ## Version 0.9.15
 
+### Added
+- Precompile workload (PrecompileTools): the solver paths used by the documentation and the workshop notebook are compiled at install time, so first calls no longer pause for compilation.
+
 ### Changed
 - Requires Julia ≥ 1.12 and is tested on 1.12 and 1.13 (Google Colab currently provides 1.12); the test runner handles `Test.TESTSET_PRINT_ENABLE` as a `ScopedValue` on 1.13.
 
