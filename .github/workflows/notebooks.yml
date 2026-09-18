@@ -1,0 +1,85 @@
+# Purpose: Regenerate the Literate.jl outputs (notebooks/*.ipynb and
+#          docs/src/generated/*.md) after a push that touches their sources,
+#          commit them back to the branch, then run the package tests on the
+#          regenerated tree. The .ipynb files are never edited by hand; the
+#          source of truth is docs/lit/*.jl.
+name: Notebooks
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+    paths:
+      - 'docs/lit/**'
+      - 'docs/generate_notebooks.jl'
+      - 'docs/Project.toml'
+      - 'docs/Manifest.toml'
+      - '.github/workflows/notebooks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: notebooks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate notebooks
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Check out branch tip
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.13'
+
+      - name: Cache Julia depot
+        uses: julia-actions/cache@v3
+
+      - name: Regenerate notebooks and Documenter pages
+        run: julia --project=docs docs/generate_notebooks.jl
+
+      - name: Commit regenerated outputs
+        id: commit
+        run: |
+          git checkout -- docs/Manifest.toml
+          git add notebooks docs/src/generated
+          if git diff --cached --quiet; then
+            echo "Generated outputs are up to date."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Regenerate notebooks from docs/lit"
+            git push
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test regenerated tree
+    needs: regenerate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out regenerated commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.regenerate.outputs.sha }}
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.13'
+
+      - name: Cache Julia depot
+        uses: julia-actions/cache@v3
+
+      - name: Run package tests
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'

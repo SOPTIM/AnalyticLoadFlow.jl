@@ -43,13 +43,11 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
       # Chain of lines keeps every bus connected (an isolated bus with only a shunt has
       # no load-flow solution); random cross links add meshing.
       for i = 1:(n-1)
-         if true
-            y_line = -(2.0 + rand()) + (10.0 + rand())im   # stiff line, |z| ≈ 0.1 pu
-            Y[i, i+1] = y_line
-            Y[i+1, i] = y_line
-            Y[i, i] -= y_line
-            Y[i+1, i+1] -= y_line
-         end
+         y_line = -(2.0 + rand()) + (10.0 + rand())im   # stiff line, |z| ≈ 0.1 pu
+         Y[i, i+1] = y_line
+         Y[i+1, i] = y_line
+         Y[i, i] -= y_line
+         Y[i+1, i+1] -= y_line
       end
 
       for i = 1:(n÷2)

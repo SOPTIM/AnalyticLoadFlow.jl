@@ -2,7 +2,7 @@
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://soptim.github.io/AnalyticLoadFlow.jl/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Julia](https://img.shields.io/badge/Julia-1.12+-9558B2.svg)](https://julialang.org/)
+[![Julia](https://img.shields.io/badge/Julia-1.13+-9558B2.svg)](https://julialang.org/)
 [![Registry](https://img.shields.io/badge/Julia-General%20Registry-success.svg)](https://github.com/JuliaRegistries/General)
 [![GitHub release](https://img.shields.io/github/v/release/SOPTIM/AnalyticLoadFlow.jl)](https://github.com/SOPTIM/AnalyticLoadFlow.jl/releases)
 [![GitHub stars](https://img.shields.io/github/stars/SOPTIM/AnalyticLoadFlow.jl?style=social)](https://github.com/SOPTIM/AnalyticLoadFlow.jl)

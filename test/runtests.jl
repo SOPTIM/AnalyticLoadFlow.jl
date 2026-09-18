@@ -46,14 +46,29 @@ function _render_progress(done::Int, total::Int, label::AbstractString = "")
    flush(stdout)
 end
 
-_prev_print_enable = Test.TESTSET_PRINT_ENABLE[]
-Test.TESTSET_PRINT_ENABLE[] = false
+# Silence the per-testset summaries while the progress bar runs. On Julia ≥ 1.13
+# `Test.TESTSET_PRINT_ENABLE` is a `ScopedValue` and must be set with `with`;
+# on older versions it is a `Ref`.
+function _with_testset_print_disabled(f)
+   flag = Test.TESTSET_PRINT_ENABLE
+   if flag isa Base.ScopedValues.ScopedValue
+      return Base.ScopedValues.with(f, flag => false)
+   end
+   prev = flag[]
+   flag[] = false
+   try
+      return f()
+   finally
+      flag[] = prev
+   end
+end
 
-test_results = try
+test_results = _with_testset_print_disabled() do
    @testset "AnalyticLoadFlow.jl Complete Test Suite" begin
       total = length(_SUITE_FILES)
       _render_progress(0, total, "starting")
-      for (idx, (label, file)) in enumerate(_SUITE_FILES)
+      for idx in eachindex(_SUITE_FILES)
+         label, file = _SUITE_FILES[idx]
          @testset "$label" begin
             with_logger(Logging.NullLogger()) do
                redirect_stdout(devnull) do
@@ -66,8 +81,6 @@ test_results = try
          _render_progress(idx, total, "$label done")
       end
    end
-finally
-   Test.TESTSET_PRINT_ENABLE[] = _prev_print_enable
 end
 
 print("\n")

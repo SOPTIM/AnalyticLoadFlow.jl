@@ -10,12 +10,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
-          version: '1.12'
+          version: '1.13'
+
+      - name: Cache Julia depot
+        uses: julia-actions/cache@v3
 
       - name: Run package tests
         run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
