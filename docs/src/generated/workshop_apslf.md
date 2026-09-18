@@ -427,153 +427,304 @@ polish.
 
 ## Part 2: the 9-bus teaching case
 
+Part 1 used `apslf_pq`, the bare PQ recursion. Real cases have PV buses
+(generators that hold a voltage magnitude), reactive limits and a slack
+that is not at 1 pu. Part 2 uses the high-level entry point
+`solve_pf_apslf` on the 9-bus teaching case that ships with the package
+and looks at what the solver does step by step.
+
 ### 4. Solving a case: `solve_pf_apslf`
 
-`solve_pf_apslf(case; ...)` is the high-level entry point. It works on a
-small NamedTuple data contract:
+#### What goes in: the case
+
+`solve_pf_apslf(case; ...)` works on a small NamedTuple data contract:
 
 | Field | Meaning |
 |:--|:--|
 | `Y` | bus admittance matrix, dense or sparse |
 | `bustype` | `:slack`, `:pv` or `:pq` per bus |
-| `Pspec`, `Qspec` | injections in pu, load negative |
-| `Vm` | voltage setpoints (used at the slack and PV buses) |
+| `Pspec`, `Qspec` | specified injections in pu, generation positive, load negative |
+| `Vm` | voltage setpoints, used at the slack and the PV buses |
 | `Qmin`, `Qmax` | reactive limits of the PV buses |
 | `slack` | index of the slack bus |
 
-It returns a NamedTuple with the voltages `V`, the reactive injections
-`Q`, `converged`, the mode that was actually used and iteration counts.
-`demo_case_9bus()` builds the 9-bus teaching case that ships with the
-package: two PV generators, six π-lines with charging, slack at 1.04 pu.
-`compute_demo_mismatch(case, res)` evaluates the power mismatch of a
-result on the case's physical Y-bus.
+The three bus types differ in what is **given** and what is **unknown**:
+
+- **slack**: voltage magnitude and angle given, $P$ and $Q$ unknown (it
+  balances the network).
+- **PV**: $P$ and $|V|$ given, $Q$ and the angle unknown. A generator
+  with voltage control.
+- **PQ**: $P$ and $Q$ given, the complex voltage unknown. Loads and
+  passive buses.
+
+`demo_case_9bus()` builds the case. Print it first, so the numbers below
+have a meaning: the slack at 1.04 pu, two PV generators at 1.025 pu with
+narrow reactive bands, three loads and three passive buses.
 
 ````@example workshop_apslf
 case = A.demo_case_9bus()
 
+println("bus   type   Pspec    Qspec    Vm      Qmin    Qmax")
+for i = 1:9
+   # the ±1e9 limits of slack and PQ buses mean "no limit"; print them as a dash
+   band = case.bustype[i] == :pv ? @sprintf("%6.2f  %6.2f", case.Qmin[i], case.Qmax[i]) : "   -       -"
+   @printf("%-5s %-6s %6.3f   %6.3f   %.3f  %s\n", case.labels[i], case.bustype[i], case.Pspec[i], case.Qspec[i], case.Vm[i], band)
+end
+@printf("\nlargest row sum of Y: %.3f pu (line charging, so the flat germ is not exact, see Section 6)\n", maximum(abs.(A.apslf_row_sums(case.Y))))
+````
+
+#### Solving
+
+The keywords below are the ones you will touch most often:
+
+- `mode`: how PV buses are handled, `:direct` (augmented real system per
+  order) or `:outer` (repeated PQ solves), see Section 7.
+- `order`: number of series coefficients. 40 is generous for a small case.
+- `use_pade`: evaluate the series at $s = 1$ with a Padé approximant.
+- `nr_polish`: a few Newton-Raphson steps **after** the series. Switched
+  off here on purpose: everything you see is the pure series result.
+
+The result is a NamedTuple. The fields used in this notebook:
+
+| Field | Meaning |
+|:--|:--|
+| `V` | complex bus voltages at $s = 1$ |
+| `Q` | reactive injections; at PV buses the value the solver found |
+| `bustype` | bus types *after* limit switching (a limited PV bus shows up as `:pq`) |
+| `converged` | the series evaluation succeeded (says nothing about the physics, see Section 6) |
+| `effective_mode` | the PV mode actually used |
+| `outer_iters` | number of outer passes (limit switching needs at least two) |
+| `switch_log` | one entry per PV→PQ switch |
+| `Vcoeff` | the coefficient matrix, only with `return_coeffs = true` |
+
+````@example workshop_apslf
+# mode = :direct   → PV buses via the augmented real system per order (Section 6.3)
+# order = 40       → 40 series coefficients per bus
+# use_pade = true  → Padé evaluation at s = 1
+# nr_polish = false → no Newton step afterwards: pure series result
+res = solve_pf_apslf(case; mode = :direct, order = 40, use_pade = true, nr_polish = false)
+
+println("converged = $(res.converged), effective mode = $(res.effective_mode), outer iterations = $(res.outer_iters)")
+````
+
+#### What comes out, and how to check it
+
+The table shows the solved voltages together with the reactive power of
+the generators. Two things to look at:
+
+- **Bus 1** stays at 1.04 pu and 0°, it is the slack.
+- **Bus 2** holds its setpoint 1.025 pu; **bus 3** does not (1.039 pu).
+  Its reactive limit was hit and it was switched to a PQ bus at
+  $Q_{\min}$. Section 7 looks at this in detail.
+
+The **power mismatch** is the check that matters: at every bus, take the
+specified $P + jQ$ and subtract the power that actually flows into the
+network at the solved voltages, $S_i = V_i \cdot \overline{(Y V)_i}$.
+`compute_demo_mismatch(case, res)` does exactly that on the case's
+physical Y-bus. A mismatch at machine precision means the series alone
+solves the load-flow equations, no Newton step involved.
+
+````@example workshop_apslf
 # largest power mismatch of a result on the physical Y-bus, in pu
 mismatch(case, res) = maximum(A.compute_demo_mismatch(case, res))
 
-# mode = :direct   → PV buses via the augmented real system per order
-# nr_polish = false → no Newton step afterwards: what you see is the pure series result
-res = solve_pf_apslf(case; mode = :direct, order = 40, use_pade = true, nr_polish = false)
-println("converged = $(res.converged), effective mode = $(res.effective_mode), outer iterations = $(res.outer_iters)")
-@printf("max mismatch on the physical Y-bus: %.2e pu (no Newton polish involved)\n", mismatch(case, res))
-println()
-println("bus   type   |V| (pu)   angle")
+println("bus   type   |V| (pu)   angle       Q (pu)")
 for i = 1:9
-   @printf("%-5s %-6s %.5f   %8.4f°\n", case.labels[i], case.bustype[i], abs(res.V[i]), rad2deg(angle(res.V[i])))
+   # res.bustype is the type after limit switching; res.Q the reactive injection found
+   note = case.bustype[i] == :pv && res.bustype[i] == :pq ? "  ← PV switched to PQ (Q limit)" : ""
+   @printf("%-5s %-6s %.5f   %8.4f°   %7.4f%s\n", case.labels[i], res.bustype[i], abs(res.V[i]), rad2deg(angle(res.V[i])), res.Q[i], note)
 end
+@printf("\nmax power mismatch on the physical Y-bus: %.2e pu\n", mismatch(case, res))
 ````
 
 ### 5. The series behind the numbers
 
-With `return_coeffs = true` the result also carries the coefficient matrix
-`Vcoeff` (buses × orders). The coefficients decay geometrically, which is
-what makes the series usable. `evaluate_series(coeffs, options)` sums the
-series of one bus at $s = 1$, either as the plain Taylor sum or as a Padé
-approximant
-([Section 5.2](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#52-padé-approximation-from-series-to-quotient)),
-which turns the polynomial into a rational function and extends the
-reach of the series to cases where the Taylor sum does not converge.
+Every voltage is a power series in the embedding parameter,
+$V_i(s) = \sum_n V_i^{(n)} s^n$, and the load flow is its value at
+$s = 1$. With `return_coeffs = true` the result carries the coefficient
+matrix `Vcoeff` (buses × orders), so the series can be inspected.
+
+The first question about any power series is its **convergence radius**
+$R$: the series converges for $|s| < R$, and it is only useful if $R > 1$.
+For large $n$ the coefficients shrink geometrically, $|V^{(n+1)}| /
+|V^{(n)}| \to 1/R$, so the ratio of consecutive coefficients estimates
+$R$.
 
 ````@example workshop_apslf
 res = solve_pf_apslf(case; order = 40, nr_polish = false, return_coeffs = true)
-Vcoef = res.Vcoeff                               # 9 buses × 41 orders
+Vcoef = res.Vcoeff                               # 9 buses × 41 orders, column n+1 holds order n
+
 println("decay of the coefficients:")
 for n in (0, 1, 2, 5, 10, 20, 40)
    @printf("  n = %2d   max_i |V_i^(n)| = %.2e\n", n, maximum(abs.(Vcoef[:, n+1])))
 end
 
-c5 = Vcoef[5, :]                                 # the series of bus 5
-taylor = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :taylor)).voltage
-pade = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :pade)).voltage
+# ratio of consecutive coefficient norms → 1/R
+ratio = maximum(abs.(Vcoef[:, 41])) / maximum(abs.(Vcoef[:, 40]))
+@printf("\nratio |V^(40)| / |V^(39)| = %.3f   →  convergence radius R ≈ %.2f\n", ratio, 1 / ratio)
+````
+
+$R \approx 2.5$: the operating point $s = 1$ is well inside the disc, and
+the coefficients have dropped by 18 orders of magnitude at $n = 40$. The
+plain Taylor sum converges here.
+
+#### Taylor vs Padé
+
+`evaluate_series(coeffs, options)` evaluates the series of **one** bus at
+$s = 1$. `APSLFEvaluationOptions(mode = :taylor)` sums the polynomial;
+`mode = :pade` turns the polynomial into a rational function, the Padé
+approximant of
+[Section 5.2](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#52-padé-approximation-from-series-to-quotient).
+A rational function can represent the voltage **beyond** the convergence
+radius of the polynomial (analytic continuation), which is why the
+solver uses Padé by default. On this easy case both must agree.
+
+````@example workshop_apslf
+c5 = Vcoef[5, :]                                 # the 41 coefficients of bus 5 (a load bus)
+taylor = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :taylor)).voltage   # plain sum
+pade = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :pade)).voltage       # rational approximant
 @printf("bus 5:  Taylor %.8f ∠ %.5f°   Padé %.8f ∠ %.5f°   |Δ| = %.1e\n", abs(taylor), rad2deg(angle(taylor)), abs(pade), rad2deg(angle(pade)), abs(taylor - pade))
 ````
 
-On this well-conditioned case both evaluations agree to machine
-precision. The poles of the Padé denominator carry extra information: the
-distance of the nearest pole to $s = 1$ is a heuristic
-distance-to-collapse indicator
+#### The poles as a distance-to-collapse indicator
+
+A Padé approximant is a quotient of two polynomials, and the roots of the
+denominator are its **poles**. They approximate the singularities of the
+true voltage function, and the nearest singularity is where the load
+flow ceases to exist (the "nose" of the PV curve). Its distance to
+$s = 1$ is therefore a heuristic margin to collapse
 ([Section 5.3](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#53-properties-and-practical-use)).
-`stability_from_Vcoeff` computes it from the coefficient matrix,
-`st_level` maps it to a traffic-light label. Scaling all injections up
-moves the nearest pole towards $s = 1$:
+`stability_from_Vcoeff` computes it from the coefficient matrix and
+returns `dmin` (that distance) and the pole; `st_level` maps `dmin` to a
+traffic light: GRN above 0.3, YEL above 0.1, RED below.
+
+The experiment: scale all injections by a factor and watch the nearest
+pole move towards $s = 1$. Two observations: the distance shrinks as the
+loading grows, and at factor 2 the load flow already has no solution
+while the level is still GRN. The indicator is a heuristic margin, not a
+certificate; read it as a trend, together with `converged` and the
+mismatch.
 
 ````@example workshop_apslf
+println("load factor  converged   min |V|   pole distance   level")
 for factor in (1.0, 1.5, 2.0, 2.5)
-   # same case with all injections scaled and the reactive limits switched off
+   # same case, all injections scaled; reactive limits switched off so only the loading changes
    heavy = merge(case, (Pspec = factor .* case.Pspec, Qspec = factor .* case.Qspec, Qmin = fill(-1e9, 9), Qmax = fill(1e9, 9)))
    rh = solve_pf_apslf(heavy; order = 40, nr_polish = false, return_coeffs = true)
-   st = A.stability_from_Vcoeff(rh.Vcoeff; slack = 1, order = 40)
-   @printf("load × %.1f: converged = %-5s  min |V| = %.4f  pole distance = %.3f  %s\n", factor, rh.converged, minimum(abs.(rh.V)), st.dmin, A.st_level(st.dmin))
+   st = A.stability_from_Vcoeff(rh.Vcoeff; slack = 1, order = 40)   # st.dmin = distance of the nearest pole to s = 1
+   @printf("   × %.1f      %-9s   %.4f    %.3f           %s\n", factor, rh.converged, minimum(abs.(rh.V)), st.dmin, A.st_level(st.dmin))
 end
 ````
 
 ### 6. The germ on the 9-bus case
 
-The same question as in Section 1, now on a real case. The row sums of
-the 9-bus matrix are non-zero (line charging), and the slack sits at
-1.04 pu, so the flat germ on the full Y-bus is not an exact order-0 state.
-`solve_pf_apslf` takes the same `germ` keyword as `apslf_pq`: `:deviation`
-(default, variant 1 of Section 6.5), `:noload` (variant 2) or the legacy
-`:flat`. Both exact variants must give the same solution; the legacy germ
-only arrives at one with the Newton polish (`nr_polish = true`).
+Section 1 showed on two buses what the germ is: the state at $s = 0$
+from which the series starts, and it has to be an **exact** solution of
+the $s = 0$ equations. On the 9-bus case two things break the flat germ
+$V = 1$: the line charging (non-zero row sums of `Y`, printed in
+Section 4) and the slack at 1.04 pu instead of 1.
+
+`solve_pf_apslf` takes the same `germ` keyword as `apslf_pq`:
+
+- `:deviation` (default): flat germ at the slack voltage, row sums ramped
+  with $s$ (variant 1 of Section 6.5).
+- `:noload`: start from the no-load voltages (variant 2).
+- `:flat`: the plain flat germ on the full `Y`, the behaviour before
+  0.9.15. Not exact here.
+
+Read the two columns together: `converged` reports that the **series
+evaluation** succeeded. The **mismatch** reports whether the result
+solves the **physics**. With the flat germ the series converges happily
+to a state that is off by 0.6 pu.
 
 ````@example workshop_apslf
-println("germ        converged   max mismatch (pu)")
+println("germ        converged   max mismatch (pu)   min |V| (pu)")
 for germ in (:deviation, :noload, :flat)
    rg = solve_pf_apslf(case; order = 40, nr_polish = false, germ = germ)
-   @printf("%-11s %-11s %.2e\n", germ, rg.converged, mismatch(case, rg))
+   @printf("%-11s %-11s %.2e            %.3f\n", germ, rg.converged, mismatch(case, rg), minimum(abs.(rg.V)))
 end
+````
 
-# Newton polish: a few Newton-Raphson steps starting from the series result.
-# The score is the mismatch before and after; on an exact germ there is little to gain.
-rp = solve_pf_apslf(case; order = 40, nr_polish = true)
-@printf("with polish (germ = :deviation): score before %.1e, after %.1e, improved = %s\n", rp.nr_polish_score_before, rp.nr_polish_score_after, rp.nr_polish_improved)
+The **Newton polish** (`nr_polish = true`) runs a few Newton-Raphson
+steps from the series result. Before 0.9.15 it was what turned the
+flat-germ result into a solution. With an exact germ the series is
+already at machine precision and the polish has nothing left to do; the
+score is the mismatch before and after.
+
+````@example workshop_apslf
+rp = solve_pf_apslf(case; order = 40, nr_polish = true)              # default germ = :deviation
+@printf("with polish: mismatch before %.1e, after %.1e, improved = %s\n", rp.nr_polish_score_before, rp.nr_polish_score_after, rp.nr_polish_improved)
 ````
 
 ### 7. PV buses and reactive limits
 
+A PV bus holds $|V|$ by injecting or absorbing reactive power. A real
+generator can only do that within a band $[Q_{\min}, Q_{\max}]$. When
+the band is exhausted the bus can no longer hold its voltage: it is
+switched to a PQ bus at the violated limit, and its voltage becomes an
+unknown like at any load bus.
+
+First without limit enforcement, to see what bus 3 **would** need:
+
+````@example workshop_apslf
+# enforce_q_limits = false → PV buses hold their setpoint whatever Q that takes
+rq = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false)
+@printf("without limits: |V3| = %.4f (setpoint %.3f)   Q3 = %.4f pu   band [%.2f, %.2f]\n", abs(rq.V[3]), case.Vm[3], rq.Q[3], case.Qmin[3], case.Qmax[3])
+````
+
+Bus 3 would have to absorb more reactive power than its lower limit
+allows. With limits enforced (the default) the solver detects this in
+the first outer pass, fixes $Q_3 = Q_{\min}$, declares bus 3 a PQ bus
+and solves again. That second pass is why `outer_iters = 2` in
+Section 4, and why bus 3 ended above its setpoint: with less reactive
+absorption the voltage rises.
+
 Two ways to handle PV buses
 ([Section 6](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#6-practical-treatment-of-pv-buses)):
-the **outer loop** (`mode = :outer`) treats every PV bus as a PQ bus and
-adjusts its reactive injection from one series solve to the next until
-the voltage magnitude is met; the **direct formulation** (`mode = :direct`)
-solves the augmented real system of Section 6.3 per order. In both modes
-the reactive limits are enforced: a PV bus that would leave its
-$[Q_{\min}, Q_{\max}]$ band is switched to a PQ bus at the violated limit,
-and the result carries a `switch_log`.
+
+- **`mode = :direct`**: $Q$ of the PV buses is an unknown of the series
+  itself; per order one augmented real linear system (Section 6.3).
+- **`mode = :outer`**: every PV bus is treated as a PQ bus, and an outer
+  loop corrects its $Q$ from one series solve to the next until $|V|$
+  matches (Section 6.2).
+
+Both end at the same solution and both switch bus 3. The $Q$ recorded in
+the switch log differs, because it is the value **at the moment of the
+switch**: the direct mode already knows the exact $Q_3$ of the
+unlimited solution, the outer loop only has its current estimate.
 
 ````@example workshop_apslf
 for mode in (:direct, :outer)
-   rm_ = solve_pf_apslf(case; mode = mode, order = 40, nr_polish = false)
+   rm_ = solve_pf_apslf(case; mode = mode, order = 40, nr_polish = false)   # limits enforced (default)
    sw = get(rm_, :switch_log, ())                 # one entry per PV→PQ switch
-   @printf("mode = %-7s converged = %-5s outer iterations = %d  PV→PQ switches = %d  Q(bus 2) = %.4f pu\n", mode, rm_.converged, rm_.outer_iters, length(sw), rm_.Q[2])
+   @printf("mode = %-7s converged = %-5s outer iterations = %d  switches = %d  |V3| = %.4f  Q3 = %.4f  Q2 = %.4f pu\n", mode, rm_.converged, rm_.outer_iters, length(sw), abs(rm_.V[3]), rm_.Q[3], rm_.Q[2])
    for e in sw
-      @printf("   outer %d: bus %d hit its %s limit (Q = %.4f pu)\n", e.outer, e.bus, e.side, e.qinj)
+      @printf("   outer pass %d: bus %d hit its %s limit (Q at the switch = %.4f pu)\n", e.outer, e.bus, e.side, e.qinj)
    end
 end
-
-# Without limit enforcement bus 3 keeps its setpoint and draws whatever Q that needs
-rq = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false)
-@printf("enforce_q_limits = false: Q(bus 3) = %.4f pu, band [%.2f, %.2f]\n", rq.Q[3], case.Qmin[3], case.Qmax[3])
 ````
 
 ### 8. Sparse matrices
 
-For larger networks pass a sparse `Y`; `solve_pf_apslf` then selects the
-sparse direct PV kernel automatically. The recursion, the germ and the
-Padé evaluation are identical, only the linear algebra changes. The
-synthetic 118-bus case that ships with the package illustrates it. The
-solve is timed twice: the first call includes compilation.
+Nothing in the method depends on the matrix being dense: the recursion
+solves one linear system per order with the **same** matrix, so one
+sparse factorization is reused for every order. Pass a sparse `Y` and
+`solve_pf_apslf` selects the sparse direct PV kernel (the one checked in
+Section 3) automatically. The synthetic 118-bus case that ships with the
+package illustrates it: 11 PV buses, 106 PQ buses. The solve is timed
+twice, because the first call of a Julia function includes compilation.
 
 ````@example workshop_apslf
 using SparseArrays
 case118 = A.demo_case_118bus_synthetic()
-sparse_case = merge(case118, (Y = sparse(case118.Y),))   # same case, sparse Y-bus
-rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false)              # warm-up (compilation)
-t = @elapsed rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false)
-@printf("118 buses, nnz(Y) = %d: converged = %s, mode = %s, max mismatch = %.1e pu, %.3f s\n", nnz(sparse_case.Y), rs.converged, rs.effective_mode, mismatch(case118, rs), t)
+sparse_case = merge(case118, (Y = sparse(case118.Y),))   # same case, Y stored sparse
+
+rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false)              # warm-up: includes compilation
+t = @elapsed rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false) # timed run
+@printf("118 buses, nnz(Y) = %d (of %d entries)\n", nnz(sparse_case.Y), length(sparse_case.Y))
+@printf("converged = %s, mode = %s, max mismatch = %.1e pu, solve time %.3f s\n", rs.converged, rs.effective_mode, mismatch(case118, rs), t)
 ````
+
+The mismatch is at machine precision again: same recursion, same germ,
+same Padé evaluation, only the linear algebra changed.
 
