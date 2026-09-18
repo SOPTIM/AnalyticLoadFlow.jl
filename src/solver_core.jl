@@ -1790,7 +1790,7 @@ Build sparse analytic Jacobian matrix for rectangular Newton-Raphson power flow 
 - `cache::NRRectCache`: Pre-allocated cache containing system structure and work arrays
 - `Y::SparseMatrixCSC{ComplexF64}`: Sparse nodal admittance matrix (nbus × nbus)
 - `V::Vector{ComplexF64}`: Current voltage phasor estimates (length nbus)
-- `Vm::Vector{Float64}`: Specified voltage magnitudes for PV buses (p.u., length nbus)
+- `Vm::Vector{Float64}`: Specified voltage magnitudes for PV buses (p.u., length nbus). Not used by the Jacobian itself (the derivative of |V_i| - Vm_i does not depend on Vm); kept for a uniform call signature with the residual functions.
 
 # Returns
 - `SparseMatrixCSC{Float64}`: Sparse Jacobian matrix J of size [2×(nbus-1)] × [2×(nbus-1)]
@@ -1842,7 +1842,7 @@ J = build_rect_jac_sparse(cache, Y_sparse, V, Vm)
 # J is now ready for Newton step: dx = -(J \\ F)
 ```
 """
-function build_rect_jac_sparse(cache::NRRectCache, Y::SparseMatrixCSC{ComplexF64}, V::Vector{ComplexF64}, Vm::Vector{Float64})
+function build_rect_jac_sparse(cache::NRRectCache, Y::SparseMatrixCSC{ComplexF64}, V::Vector{ComplexF64}, ::Vector{Float64})
    n = cache.nbus
    slack = cache.slack
    non_slack = cache.non_slack
@@ -1975,7 +1975,7 @@ Build dense analytic Jacobian matrix for rectangular Newton-Raphson power flow i
 - `cache::NRRectCache`: Pre-allocated cache containing system structure and work arrays
 - `Y::AbstractMatrix{ComplexF64}`: Nodal admittance matrix (nbus × nbus), any format
 - `V::Vector{ComplexF64}`: Current voltage phasor estimates (length nbus)
-- `Vm::Vector{Float64}`: Specified voltage magnitudes for PV buses (p.u., length nbus)
+- `Vm::Vector{Float64}`: Specified voltage magnitudes for PV buses (p.u., length nbus). Not used by the Jacobian itself (the derivative of |V_i| - Vm_i does not depend on Vm); kept for a uniform call signature with the residual functions.
 
 # Returns
 - `Matrix{Float64}`: Dense Jacobian matrix J of size [2×(nbus-1)] × [2×(nbus-1)]
@@ -2027,9 +2027,8 @@ J = build_rect_jac_dense(cache, Y, V, Vm)  # Y can be any matrix type
 # J is now ready for Newton step: dx = -(J \\ F)
 ```
 """
-function build_rect_jac_dense(cache::NRRectCache, Y::AbstractMatrix{ComplexF64}, V::Vector{ComplexF64}, Vm::Vector{Float64})
+function build_rect_jac_dense(cache::NRRectCache, Y::AbstractMatrix{ComplexF64}, V::Vector{ComplexF64}, ::Vector{Float64})
    n = cache.nbus
-   slack = cache.slack
    non_slack = cache.non_slack
    pos_ns = cache.pos_ns
    rowP = cache.rowP
