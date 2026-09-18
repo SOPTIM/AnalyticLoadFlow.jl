@@ -60,6 +60,12 @@
 #nb # fresh temporary environment. Run it first, once per session. To test a
 #nb # branch, change `rev`. For a private checkout use a personal access token:
 #nb # `Pkg.add(url = "https://USER:TOKEN@github.com/USER/AnalyticLoadFlow.jl", rev = "main")`.
+#nb #
+#nb # > **If the first line below reports a syntax error**, the notebook was
+#nb # > opened with a Python runtime. In Colab choose *Runtime → Change runtime
+#nb # > type → Julia* and run the cell again.
+#nb println("Julia ", VERSION)
+#nb VERSION >= v"1.13" || @warn "AnalyticLoadFlow requires Julia ≥ 1.13; this runtime has $(VERSION). The install below will fail; please report the version shown above."
 #nb using Pkg
 #nb Pkg.activate(temp = true)
 #nb Pkg.add(url = "https://github.com/SOPTIM/AnalyticLoadFlow.jl", rev = "main")
