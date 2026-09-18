@@ -23,7 +23,7 @@
 #          anchor) and are plain Markdown links on the Documenter page.       #src
 #          Regenerate with `julia --project=docs docs/generate_notebooks.jl`. #src
 
-# # APSLF workshop: the theory article against the solver, then the 9-bus case
+# # APSLF workshop: the theory article against the solver.
 #
 # > **Level: Newcomer to Advanced.** One notebook, one install; runs in about a minute afterwards.
 #
@@ -53,7 +53,7 @@
 # reactive limits and the sparse path.
 #
 # > **Note:** On Google Colab the install cell takes a few minutes on a
-# > fresh session. This notebook targets Julia ≥ 1.12.
+# > fresh session. This notebook targets Julia ≥ 1.13.
 
 #nb # ## Setup (Colab)
 #nb # This cell installs AnalyticLoadFlow from GitHub (branch `main`) into a

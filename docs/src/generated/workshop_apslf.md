@@ -2,7 +2,7 @@
 EditURL = "../../lit/workshop_apslf.jl"
 ```
 
-# APSLF workshop: the theory article against the solver, then the 9-bus case
+# APSLF workshop: the theory article against the solver.
 
 > **Level: Newcomer to Advanced.** One notebook, one install; runs in about a minute afterwards.
 
@@ -30,7 +30,7 @@ the series, the Padé evaluation, the choice of the germ, PV buses with
 reactive limits and the sparse path.
 
 > **Note:** On Google Colab the install cell takes a few minutes on a
-> fresh session. This notebook targets Julia ≥ 1.12.
+> fresh session. This notebook targets Julia ≥ 1.13.
 
 ## Warm-up and helpers
 

@@ -15,7 +15,7 @@ jobs:
       - name: Set up Julia
         uses: julia-actions/setup-julia@v2
         with:
-          version: '1.12'
+          version: '1.13'
 
       - name: Run package tests
         run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
