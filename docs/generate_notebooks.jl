@@ -39,22 +39,22 @@ const NOTEBOOK_DIR = normpath(joinpath(@__DIR__, "..", "notebooks"))
 """
     patch_notebook_metadata!(path)
 
-Rewrite the notebook's `metadata.kernelspec` to the generic
-`{name: "julia", display_name: "Julia", language: "julia"}` so Google Colab
-selects its Julia runtime automatically, and drop the local Julia version from
-`language_info` so the committed file does not churn with every Julia upgrade.
+Rewrite the notebook's `metadata.kernelspec` to the Julia 1.13 kernel
+(`julia-1.13`, the version the package targets) and pin `language_info` to the
+same version, so the committed file does not depend on the Julia that ran the
+generator.
 """
 function patch_notebook_metadata!(path::AbstractString)
    nb = copy(JSON3.read(read(path, String)))
    metadata = get!(nb, :metadata, Dict{Symbol,Any}())
-   metadata[:kernelspec] = Dict(:name => "julia", :display_name => "Julia", :language => "julia")
-   metadata[:language_info] = Dict(:name => "julia", :file_extension => ".jl", :mimetype => "application/julia")
+   metadata[:kernelspec] = Dict(:name => "julia-1.13", :display_name => "Julia 1.13.0", :language => "julia")
+   metadata[:language_info] = Dict(:name => "julia", :version => "1.13.0", :file_extension => ".jl", :mimetype => "application/julia")
    open(path, "w") do io
       JSON3.pretty(io, nb)
       println(io)
    end
    ks = JSON3.read(read(path, String)).metadata.kernelspec
-   @assert ks.name == "julia" && ks.language == "julia" && ks.display_name == "Julia"
+   @assert ks.name == "julia-1.13" && ks.language == "julia" && ks.display_name == "Julia 1.13.0"
    return nothing
 end
 

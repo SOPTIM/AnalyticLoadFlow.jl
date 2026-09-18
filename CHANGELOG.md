@@ -2,6 +2,9 @@
 
 ## Version 0.9.15
 
+### Changed
+- Requires Julia 1.13: `[compat]`, CI and the workshop notebook kernel target 1.13; the test runner handles `Test.TESTSET_PRINT_ENABLE` as a `ScopedValue`.
+
 ### Fixed
 - Fixed the PQ recursion to use the reflected reciprocal `conj(W^(n-1))` on the right-hand side (theory 1.7, Section 2.4).
 - Fixed the sign of the reactive-power unknown in the direct PV kernels; the PV active power is now met without NR polish.
