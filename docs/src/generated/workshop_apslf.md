@@ -30,7 +30,7 @@ the series, the Padé evaluation, the choice of the germ, PV buses with
 reactive limits and the sparse path.
 
 > **Note:** On Google Colab the install cell takes a few minutes on a
-> fresh session. This notebook targets Julia ≥ 1.13.
+> fresh session. This notebook targets Julia ≥ 1.12.
 
 ## Warm-up and helpers
 
