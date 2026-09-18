@@ -53,7 +53,7 @@
 # reactive limits and the sparse path.
 #
 # > **Note:** On Google Colab the install cell takes a few minutes on a
-# > fresh session. This notebook targets Julia ≥ 1.13.
+# > fresh session. This notebook targets Julia ≥ 1.12.
 
 #nb # ## Setup (Colab)
 #nb # This cell installs AnalyticLoadFlow from GitHub (branch `main`) into a
@@ -65,7 +65,7 @@
 #nb # > opened with a Python runtime. In Colab choose *Runtime → Change runtime
 #nb # > type → Julia* and run the cell again.
 #nb println("Julia ", VERSION)
-#nb VERSION >= v"1.13" || @warn "AnalyticLoadFlow requires Julia ≥ 1.13; this runtime has $(VERSION). The install below will fail; please report the version shown above."
+#nb VERSION >= v"1.12" || @warn "AnalyticLoadFlow requires Julia ≥ 1.12; this runtime has $(VERSION). The install below will fail; please report the version shown above."
 #nb using Pkg
 #nb Pkg.activate(temp = true)
 #nb Pkg.add(url = "https://github.com/SOPTIM/AnalyticLoadFlow.jl", rev = "main")

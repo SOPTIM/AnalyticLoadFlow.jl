@@ -3,7 +3,7 @@
 ## Version 0.9.15
 
 ### Changed
-- Requires Julia 1.13: `[compat]`, CI and the workshop notebook kernel target 1.13; the test runner handles `Test.TESTSET_PRINT_ENABLE` as a `ScopedValue`.
+- Requires Julia ≥ 1.12 and is tested on 1.12 and 1.13 (Google Colab currently provides 1.12); the test runner handles `Test.TESTSET_PRINT_ENABLE` as a `ScopedValue` on 1.13.
 
 ### Fixed
 - Fixed the PQ recursion to use the reflected reciprocal `conj(W^(n-1))` on the right-hand side (theory 1.7, Section 2.4).
