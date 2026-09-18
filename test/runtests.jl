@@ -53,7 +53,8 @@ test_results = try
    @testset "AnalyticLoadFlow.jl Complete Test Suite" begin
       total = length(_SUITE_FILES)
       _render_progress(0, total, "starting")
-      for (idx, (label, file)) in enumerate(_SUITE_FILES)
+      for idx in eachindex(_SUITE_FILES)
+         label, file = _SUITE_FILES[idx]
          @testset "$label" begin
             with_logger(Logging.NullLogger()) do
                redirect_stdout(devnull) do
