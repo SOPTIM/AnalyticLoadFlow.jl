@@ -244,10 +244,12 @@ Y2 = [y -y; -y y+ysh2]              # full 2×2 Y-bus, capacitor in the diagonal
 ## so the entry is never read (0 is a placeholder). Bus 2 carries the load S2 = -0.5 - j0.15.
 S = [0.0im, S2]                     # = [0.0 + 0.0im, -0.5 - 0.15im]
 
-## V   : voltage at s = 1 for both buses
+## Y2, S : the 2×2 Y-bus and the injection vector from the cell above
+## germ = :deviation is the default; written out here so the embedding is visible
+## Vs  : voltage at s = 1 for both buses
 ## Vc  : coefficients V^(n) of bus 2, columns are the orders 0..10
 ## Wc  : coefficients W^(n) of the reciprocal series
-Vs, Vc, Wc = A.apslf_pq(Y2, S; slack = 1, order = 10, use_pade = true)
+Vs, Vc, Wc = A.apslf_pq(Y2, S; slack = 1, order = 10, use_pade = true, germ = :deviation)
 
 println("solver coefficients against the hand recursion:")
 for n = 1:3
@@ -443,8 +445,11 @@ println("article:           0.918383-0.102390im  0.895249-0.129200im  0.873961-0
 # solved voltages; comparing it with the specified `S4` is the power
 # mismatch on the physical network.
 
+## Y4 : the 4×4 physical Y-bus built above with build_ybus_from_branches
+## S4 : the injections [0, S2, S3, S4] defined next to it (bus 1 is the slack)
+## germ = :deviation is the default; written out here so the embedding is visible
 ## Vsol : voltages at s = 1 (Padé), Vc4 : coefficient matrix (3 non-slack buses × 41 orders)
-Vsol, Vc4, _ = A.apslf_pq(Y4, S4; slack = 1, order = 40, use_pade = true)
+Vsol, Vc4, _ = A.apslf_pq(Y4, S4; slack = 1, order = 40, use_pade = true, germ = :deviation)
 for n = 1:3
    @printf("solver n = %d   max |Δ to hand| = %.1e   max |Δ to article| = %.1e\n", n, maximum(abs.(Vc4[:, n+1] .- V4h[:, n+1])), maximum(abs.(Vc4[:, n+1] .- article[n])))
 end
