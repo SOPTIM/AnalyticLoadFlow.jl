@@ -564,9 +564,33 @@ ratio = maximum(abs.(Vcoef[:, 41])) / maximum(abs.(Vcoef[:, 40]))
 @printf("\nratio |V^(40)| / |V^(39)| = %.3f   →  convergence radius R ≈ %.2f\n", ratio, 1 / ratio)
 ````
 
-$R \approx 2.5$: the operating point $s = 1$ is well inside the disc, and
-the coefficients have dropped by 18 orders of magnitude at $n = 40$. The
-plain Taylor sum converges here.
+$R \approx 2.5$ means: the operating point $s = 1$ is well inside the
+disc of convergence, and every additional order shrinks the next
+coefficient by a factor of about 2.5. The coefficient of order 40 is
+around $10^{-18}$, far below machine precision, so it contributes nothing
+to the sum at $s = 1$. In other words, `order = 40` is more than this
+case needs.
+
+How many orders **are** needed? The truncation error of the Taylor sum is
+roughly the size of the first omitted coefficient. With a factor 2.5 per
+order, $10^{-10}$ takes about 25 orders and machine precision about 40.
+The Padé evaluation gets there earlier, because the rational function
+extrapolates the tail of the series. The next cell solves the case with
+increasing order and prints the mismatch for both evaluations.
+
+````@example workshop_apslf
+println("order   mismatch Taylor   mismatch Padé")
+for o in (5, 10, 15, 20, 30, 40)
+   rt = solve_pf_apslf(case; order = o, nr_polish = false, use_pade = false)   # plain sum
+   rpd = solve_pf_apslf(case; order = o, nr_polish = false, use_pade = true)   # Padé
+   @printf("  %2d      %.1e          %.1e\n", o, mismatch(case, rt), mismatch(case, rpd))
+end
+````
+
+Rule of thumb for this case: with Padé, `order = 20` is accurate to about
+$10^{-13}$ and `order = 30` reaches machine precision. Harder cases (a
+smaller $R$, pole closer to $s = 1$) need more orders, and there the
+advantage of Padé grows.
 
 #### Taylor vs Padé
 
@@ -632,10 +656,21 @@ Section 4) and the slack at 1.04 pu instead of 1.
 - `:flat`: the plain flat germ on the full `Y`, the behaviour before
   0.9.15. Not exact here.
 
-Read the two columns together: `converged` reports that the **series
-evaluation** succeeded. The **mismatch** reports whether the result
-solves the **physics**. With the flat germ the series converges happily
-to a state that is off by 0.6 pu.
+What the experiment shows: read `converged` and the mismatch
+**together**. `converged` only reports that the series evaluation
+succeeded, that the coefficients decayed and the Padé approximant could
+be built. It says nothing about whether the result solves the network.
+With the flat germ the series does converge, but to the solution of a
+**different** problem (the one whose $s = 0$ state is $V = 1$), and that
+state is 0.6 pu away from the load flow, with a bus at 0.27 pu. Only the
+mismatch reveals it.
+
+Which germ to use: keep the default `:deviation`. It is exact for any
+`Y`, keeps the germ at nominal voltage and usually has the larger
+convergence radius. `:noload` is the alternative to try when a case with
+strong shunts or transformers does not converge with the default.
+`:flat` exists to reproduce results of versions before 0.9.15; do not use
+it for new work.
 
 ````@example workshop_apslf
 println("germ        converged   max mismatch (pu)   min |V| (pu)")
@@ -693,6 +728,14 @@ the switch log differs, because it is the value **at the moment of the
 switch**: the direct mode already knows the exact $Q_3$ of the
 unlimited solution, the outer loop only has its current estimate.
 
+Why does the **direct** mode report two outer iterations? The direct
+formulation removes the outer loop for holding $|V|$, that part is
+inside the series. The reactive **limits** are a different matter: which
+buses end up limited is a yes/no decision that can only be made after a
+solution exists. So pass 1 solves with bus 3 as PV, finds $Q_3$ outside
+the band, switches the bus, and pass 2 solves the changed problem. With
+limits enforced, every mode needs at least one pass per switch.
+
 ````@example workshop_apslf
 for mode in (:direct, :outer)
    rm_ = solve_pf_apslf(case; mode = mode, order = 40, nr_polish = false)   # limits enforced (default)
@@ -703,6 +746,25 @@ for mode in (:direct, :outer)
    end
 end
 ````
+
+Without limit enforcement the difference between the modes becomes
+visible: the direct mode needs **one** pass, the outer loop needs many,
+because it has to iterate the reactive injections of the PV buses until
+their voltages match, and it stops at a tolerance rather than at machine
+precision.
+
+````@example workshop_apslf
+println()
+println("enforce_q_limits = false:")
+for mode in (:direct, :outer)
+   rn = solve_pf_apslf(case; mode = mode, order = 40, nr_polish = false, enforce_q_limits = false)
+   @printf("mode = %-7s outer iterations = %2d  max | |V| - Vm | at PV buses = %.1e  mismatch = %.1e pu\n", mode, rn.outer_iters, maximum(abs.(abs.(rn.V[[2, 3]]) .- case.Vm[[2, 3]])), mismatch(case, rn))
+end
+````
+
+On nine buses with two generators that is a matter of milliseconds
+either way. Section 8 repeats the comparison on 118 buses with eleven
+generators, where the outer loop does not get there at all.
 
 ### 8. Sparse matrices
 
@@ -727,4 +789,26 @@ t = @elapsed rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false) # t
 
 The mismatch is at machine precision again: same recursion, same germ,
 same Padé evaluation, only the linear algebra changed.
+
+#### Direct vs outer on 118 buses
+
+The same case in both PV modes. The outer loop has to find eleven
+reactive injections at once by successive correction, and the
+corrections interact through the network. Within its 30 passes it does
+not reach the setpoints; the direct mode solves it in one pass, because
+the eleven unknowns are part of the linear system of every order.
+
+````@example workshop_apslf
+pv118 = findall(==(:pv), case118.bustype)        # the eleven PV buses
+println("mode     converged   outer passes   max | |V| - Vm | at PV   time")
+for mode in (:direct, :outer)
+   rm118 = solve_pf_apslf(sparse_case; mode = mode, order = 40, nr_polish = false)
+   t118 = @elapsed rm118 = solve_pf_apslf(sparse_case; mode = mode, order = 40, nr_polish = false)
+   @printf("%-8s %-11s %2d             %.1e                 %.3f s\n", mode, rm118.converged, rm118.outer_iters, maximum(abs.(abs.(rm118.V[pv118]) .- case118.Vm[pv118])), t118)
+end
+````
+
+This is the practical reason `mode = :direct` is the default: the outer
+loop is the simpler method to explain, the direct formulation is the one
+to use.
 
