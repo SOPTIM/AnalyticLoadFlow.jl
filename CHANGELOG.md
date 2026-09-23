@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 0.9.16
+
+### Changed
+- The precompile workload is selectable via `ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD` (`off`, `core` = default, `full`); the default compiles only the default `solve_pf_apslf` call, which cuts the install-time precompile to a fraction.
+
 ## Version 0.9.15
 
 ### Added
