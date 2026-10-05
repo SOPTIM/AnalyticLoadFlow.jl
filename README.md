@@ -25,7 +25,7 @@ No installation required, the workshop notebooks run on Google Colab:
 |---|---|
 | **APSLF workshop**: the hand calculations of theory Section 7 (two-bus, four-bus) against the solver digit by digit, then the 9-bus case: series and Padé, germ variants, PV buses and Q limits, sparse path | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_apslf.ipynb) |
 | **Transformers and PST**: branch model, the two embeddings of theory Section 6.5 by hand, angle sweep, regulated PST | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_pst.ipynb) |
-| **Large network**: PEGASE 2869 from a MATPOWER file, convention detection, timing, diagnostics | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_large_network.ipynb) |
+| **Large network**: PEGASE 2869 from a MATPOWER file, timing, diagnostics | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_large_network.ipynb) |
 
 See `notebooks/README.md`; the notebooks are generated from the Literate sources in `docs/lit/`.
 

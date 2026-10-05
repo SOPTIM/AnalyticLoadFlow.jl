@@ -142,7 +142,8 @@ end
    mp = parse_matpower_m(path)
    @test mp.baseMVA == 100.0
    @test size(mp.bus) == (5, 13) && size(mp.gen) == (3, 21) && size(mp.branch) == (6, 13)
-   c = matpower_case(path)
+   # experimental detection: the file is written in a non-MATPOWER convention
+   c = matpower_case(path; angle_unit = :auto, angle_sign = 0, ratio_convention = :auto)
    @test size(c.Y) == (4, 4) && issparse(c.Y)
    @test c.bustype == [:slack, :pq, :pv, :pq]
    @test c.slack == 1
@@ -161,9 +162,10 @@ end
    res2 = solve_pf_apslf(c; order = 40, nr_polish = false)
    @test res2.converged
    @test maximum(abs.(res2.V .- res.V)) < 1e-6
-   # forced (wrong) convention is honored
-   c_deg = matpower_case(path; angle_unit = :deg, angle_sign = 1, ratio_convention = :matpower)
-   @test c_deg.conventions.angle_unit == :deg
+   # default: MATPOWER convention, no detection (the stored state of this file does not fit it)
+   c_deg = matpower_case(path)
+   @test (c_deg.conventions.angle_unit, c_deg.conventions.angle_sign, c_deg.conventions.ratio_convention) == (:deg, 1, :matpower)
+   @test length(c_deg.conventions.trials) == 1
    @test c_deg.conventions.ref_mismatch_pu > 1e-3
    @test_throws ArgumentError matpower_case(path; angle_unit = :grad)
    @test_throws ArgumentError parse_matpower_m(joinpath(dirname(path), "missing.m"))
@@ -194,17 +196,14 @@ end
 
 const _PEGASE_1354 = normpath(joinpath(@__DIR__, "..", "data", "_downloaded", "case1354pegase.m"))
 if isfile(_PEGASE_1354)
-   @testset "PEGASE 1354 (local download): conventions and pure APSLF solution" begin
+   @testset "PEGASE 1354 (local download): MATPOWER conventions and pure APSLF solution" begin
       c = matpower_case(_PEGASE_1354)
       @test size(c.Y) == (1354, 1354)
-      @test c.conventions.angle_unit == :rad
-      @test c.conventions.angle_sign == -1
-      @test c.conventions.ratio_convention == :matpower
+      @test (c.conventions.angle_unit, c.conventions.angle_sign, c.conventions.ratio_convention) == (:deg, 1, :matpower)
       res = solve_pf_apslf(c; order = 40, nr_polish = false, enforce_q_limits = false)
       @test res.converged
       @test res.effective_mode == :direct
       @test max(A.compute_demo_mismatch(c, res)...) < 1e-8
-      @test maximum(abs.(res.V .- c.V_ref)) < 2e-2
    end
 else
    @info "PEGASE test skipped (no data/_downloaded/case1354pegase.m); run examples/pegase_matpower_demo.jl to download it"

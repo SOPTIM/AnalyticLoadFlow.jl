@@ -29,9 +29,8 @@
 # networks (380/220 kV) distributed with MATPOWER under CC BY 4.0
 # ([Josz et al., 2016](https://arxiv.org/abs/1603.01533)). `case2869pegase`
 # has 2869 buses, 509 generators, 4582 branches, hundreds of transformers and
-# a dozen phase shifters. This notebook reads the MATPOWER file, sorts out its
-# transformer conventions, solves it with the sparse direct PV kernel and
-# compares the result with the solved state stored in the file.
+# a dozen phase shifters. This notebook reads the MATPOWER file, solves it
+# with the direct PV kernel and looks at the series behind the result.
 
 #nb # ## Setup (Colab)
 #nb # This cell installs AnalyticLoadFlow from GitHub (branch `main`) into a
@@ -70,75 +69,41 @@ path = fetch_case("case2869pegase")
 mp = parse_matpower_m(path)
 @printf("%s: baseMVA = %.0f, %d bus rows, %d generator rows, %d branch rows\n", mp.name, mp.baseMVA, size(mp.bus, 1), size(mp.gen, 1), size(mp.branch, 1))
 
-# ## 2. Transformer conventions
+# ## 2. Import
 #
-# MATPOWER defines the branch `angle` column in degrees and `ratio` as the tap
-# on the from side. Converted cases do not always follow this: the PEGASE
-# files carry the phase-shift angle in radians with the opposite sign. A
-# wrong guess is not a small error, a 0.43 rad shift read as 0.43° is a
-# different network. [`matpower_case`](@ref) resolves this from the solved
-# state stored in the file: every combination of unit, sign and ratio
-# convention is stamped into a Y-bus, and the one that reproduces the stored
-# `(Vm, Va)` with the smallest total power mismatch wins.
+# [`matpower_case`](@ref) reads the file with the MATPOWER conventions:
+# branch `angle` in degrees, `ratio` as the tap on the from side. The
+# network at a glance:
 
-case = with_silent(() -> matpower_case(path))   # its warning about the stored state is discussed below
-conv = case.conventions
-chosen = (conv.angle_unit, conv.angle_sign, conv.ratio_convention)
-println("angle | sign | ratio     | max mismatch | L1 mismatch of the stored state")
-for t in conv.trials
-   mark = (t.angle_unit, t.angle_sign, t.ratio_convention) == chosen ? "  <- chosen" : ""
-   @printf("%-5s | %+d   | %-9s | %10.2e   | %10.2e%s\n", t.angle_unit, t.angle_sign, t.ratio_convention, t.ref_mismatch_pu, t.ref_mismatch_l1_pu, mark)
-end
-
-# Radians with the opposite sign win by two orders of magnitude. The network
-# at a glance:
-
+case = matpower_case(path)
 nbus = size(case.Y, 1)
 shifts = [b.shift_deg for b in case.branches if A.is_phase_shifter(b)]
 @printf("%d buses, %d branches, %d PV buses\n", nbus, length(case.branches), count(==(:pv), case.bustype))
-@printf("%d transformers, %d of them phase shifters (angles from %.1f° to %.1f°)\n",
+@printf("%d transformers, %d of them phase shifters (angles from %.2f° to %.2f°)\n",
    count(A.is_transformer, case.branches), length(shifts), minimum(shifts), maximum(shifts))
-@assert chosen == (:rad, -1, :matpower) && length(shifts) == 12   #src
+@assert (case.conventions.angle_unit, case.conventions.angle_sign, case.conventions.ratio_convention) == (:deg, 1, :matpower)   #src
+@assert length(shifts) == 12   #src
 
-# Even the chosen convention leaves a residual of 0.5 pu. Where does it sit?
-# The per-bus mismatch of the stored state on the imported Y-bus (P at every
-# non-slack bus, Q at PQ buses):
+# The file also stores a state `(Vm, Va)` in its bus block. It is not a
+# solution of this network model; its power mismatch on the imported Y-bus:
 
-Sref = A.calc_injections(case.Y, case.V_ref)
-mis = [k == case.slack ? 0.0 :
-       max(abs(real(Sref[k]) - case.Pspec[k]), case.bustype[k] == :pq ? abs(imag(Sref[k]) - case.Qspec[k]) : 0.0)
-       for k = 1:nbus]
-pst_buses = Set(Iterators.flatten((b.i, b.j) for b in case.branches if A.is_phase_shifter(b)))
-for k in sortperm(mis, rev = true)[1:3]
-   @printf("bus %-5s mismatch %.3f pu %s\n", case.labels[k], mis[k], k in pst_buses ? "(PST terminal)" : "")
-end
-@printf("%d buses above 1e-3 pu, %d of them PST terminals (%d PST terminals in total)\n",
-   count(>(1e-3), mis), count(k -> mis[k] > 1e-3 && k in pst_buses, 1:nbus), length(pst_buses))
-@assert sort(findall(>(0.1), mis)) == sort([k for k in pst_buses if mis[k] > 0.1]) && count(>(0.1), mis) == 2   #src
+@printf("stored state: max power mismatch %.1f pu\n", case.conventions.ref_mismatch_pu)
+@assert case.conventions.ref_mismatch_pu > 1   #src
 
-# The large residual sits at two of the 24 PST terminals (0.51 pu at bus 58,
-# 0.11 pu at bus 6153); about two hundred other buses carry between 1e-3 and
-# 1e-2 pu. This is a property of the file, not of the import: the stored
-# voltages were not produced with exactly this branch model. The solver below
-# does not use them; they only serve for the convention check and for the
-# comparison at the end of Section 3.
+# The solver does not use the stored state.
 
 # ## 3. Solving
 #
 # `Y` is sparse, and so is the whole solver: no conversion is needed. The
 # default embedding (`germ = :deviation`) keeps the flat germ and ramps bus
 # shunts and transformer deviations up with $s$. The series is evaluated at
-# $s = 1$ with Padé approximants; no Newton polish is needed. (The plain
-# Taylor sum of the same 40 terms would stop at a mismatch of about 2e-8 pu
-# here, just above the 1e-8 tolerance.)
+# $s = 1$ with Padé approximants; no Newton polish is needed.
 
 res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
 t = @elapsed res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
 @printf("converged = %s, mode = %s, outer iterations = %d, %.3f s\n", res.converged, res.effective_mode, res.outer_iters, t)
 @assert res.converged && res.outer_iters == 1 && mismatch(case, res) < 1e-8   #src
 @printf("max mismatch on the physical Y-bus = %.1e pu,  |V| in [%.4f, %.4f] pu\n", mismatch(case, res), minimum(abs.(res.V)), maximum(abs.(res.V)))
-dV = abs.(res.V .- case.V_ref)
-@printf("distance to the stored state: max %.1e pu (bus %s), mean %.1e pu\n", maximum(dV), case.labels[argmax(dV)], sum(dV) / length(dV))
 
 # ## 4. Why the embedding matters on a large network
 #
