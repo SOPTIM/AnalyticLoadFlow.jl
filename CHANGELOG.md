@@ -3,49 +3,48 @@
 ## Version 0.10.0
 
 ### Added
-- Transformer and PST branches, `solve_pf_pst_regulated`.
-- MATPOWER reader (`parse_matpower_m`, `matpower_case`), PEGASE 2869 example.
+- Transformers and phase shifters, regulated PST.
+- MATPOWER reader.
 - Notebooks "Transformers and PST" and "Large network (PEGASE)".
-- `docs/test_notebooks.jl` runs all notebooks in CI (Julia 1.12, 1.13).
+- Notebook test in CI.
 
 ### Changed
-- Solver is sparse only; a dense `Y` is converted on entry.
-- Series evaluation uses Padé only. `use_pade` and the removed dense options are accepted without effect.
-- `inner = :direct_pv` is the default everywhere.
-- Outer mode, Taylor evaluation and the germs `:noload` and `:flat` are marked experimental.
-- `stability_from_Vcoeff` returns `radius` and `level` and ignores spurious poles.
-- Shorter precompile and first call.
+- Sparse only.
+- Padé only.
+- Direct mode is the default.
+- Outer mode, Taylor evaluation, `:noload` and `:flat` are experimental.
+- `stability_from_Vcoeff`: new fields `radius` and `level`.
+- Faster precompile.
 
 ### Fixed
-- Outer mode reports `converged = true` only below the mismatch tolerance.
-- A successful direct-PV fallback after a non-finite PQ solve is now used.
+- Outer mode: `converged` checks the mismatch.
+- Direct-PV fallback result is used.
 
 ## Version 0.9.16
 
 ### Changed
-- The precompile workload is selectable via `ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD` (`off`, `core` = default, `full`); the default compiles only the default `solve_pf_apslf` call, which cuts the install-time precompile to a fraction.
+- Selectable precompile workload (`ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD`).
 
 ## Version 0.9.15
 
 ### Added
-- Precompile workload (PrecompileTools): the solver paths used by the documentation and the workshop notebook are compiled at install time, so first calls no longer pause for compilation.
+- Precompile workload.
+- `pv_secant_damping` for the outer PV loop.
 
 ### Changed
-- Requires Julia ≥ 1.12 and is tested on 1.12 and 1.13 (Google Colab currently provides 1.12); the test runner handles `Test.TESTSET_PRINT_ENABLE` as a `ScopedValue` on 1.13.
+- Julia 1.12 and 1.13.
 
 ### Fixed
-- Fixed the PQ recursion to use the reflected reciprocal `conj(W^(n-1))` on the right-hand side (theory 1.7, Section 2.4).
-- Fixed the sign of the reactive-power unknown in the direct PV kernels; the PV active power is now met without NR polish.
-- Fixed the order-0 state: with the new default `germ = :deviation` (or `:noload`) line shunts and `Vslack ≠ 1` are exact, so pure APSLF is a load-flow solution without NR polish.
-- Added `pv_secant_damping` (default 1.0) for the outer PV loop.
+- PQ recursion uses `conj(W^(n-1))`.
+- Sign of the reactive-power unknown in the direct PV kernels.
+- Exact order-0 state with `germ = :deviation`.
 
 ## Version 0.9.14
 
-### New Features
-
-- Added self-contained demo helpers and console examples for direct Y-bus input.
-- Added a parametric synthetic tiled-grid scaling example with configurable requested bus count and compact timing output.
+### Added
+- Demo helpers and console examples for Y-bus input.
+- Tiled-grid scaling example.
 
 ### Fixed
-- Fixed misleading CLI wording for synthetic integration cases.
-- Fixed Documenter warnings for missing API docstrings and removed the public docs link to the repository-level patent note.
+- CLI wording for synthetic cases.
+- Documenter warnings.
