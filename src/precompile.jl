@@ -4,7 +4,7 @@
 #          how much of the solver is compiled into the package image at
 #          install time: "off" nothing, "core" (default) the one call every
 #          session makes, "full" every solver path the documentation and the
-#          workshop notebook use (for sysimage builds).
+#          workshop notebooks use (for sysimage builds).
 #
 # Copyright 2026 SOPTIM AG
 #
@@ -36,7 +36,7 @@ function _precompile_core()
    return nothing
 end
 
-# "full": every solver path the documentation and the workshop notebook use.
+# "full": every solver path the documentation and the workshop notebooks use.
 function _precompile_full()
    # Two-bus network with a capacitor bank (theory Section 7.10)
    y = 1.0 - 4.0im
@@ -87,6 +87,12 @@ function _precompile_full()
       sparse_case = merge(case, (Y = sparse(case.Y),))
       solve_pf_apslf(sparse_case; order = 12, nr_polish = false)
       solve_pf_apslf(sparse_case; mode = :outer, order = 12, nr_polish = false, max_outer = 3)
+
+      # Phase-shifting transformer: fixed shift, branch flows, regulated PST
+      pst = demo_case_9bus_pst(shift_deg = 5.0, enforce_q_limits = false)
+      rp = solve_pf_apslf(pst; order = 12, nr_polish = false)
+      branch_flows(rp.V, pst.branches)
+      solve_pf_pst_regulated(φ -> demo_case_9bus_pst(shift_deg = φ, enforce_q_limits = false), 4, 5, 0.3; order = 12, nr_polish = false, max_iter = 3)
    end
    return nothing
 end

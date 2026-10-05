@@ -207,6 +207,8 @@ AnalyticLoadFlow/
 | `src/AnalyticLoadFlow.jl` | Module definition, includes, and public exports |
 | `src/solver_core.jl` | APSLF core, Taylor/Padé evaluation, PQ/PV handling, Q limits, and NR polish |
 | `src/demo_cases.jl` | Reusable case builders and demo wrappers for examples and tests |
+| `src/transformers.jl` | Branch model with ratio and phase shift, `build_ybus` (dense/sparse), branch flows, 9-bus PST case, regulated PST loop |
+| `src/matpower_import.jl` | MATPOWER `.m` reader with transformer convention detection |
 | `src/utils.jl` | Formatting, mismatch, stability, and logging helpers as well as tiled-grid builders |
 | `src/line_flows.jl` | Branch power flows and aggregated line losses |
 | `src/yamlparams.jl` | Helpers for parameter processing in configured runs |
@@ -228,6 +230,8 @@ The files contain no real grid data and no official benchmark cases.
 | `examples/synthetic_118_ybus_demo.jl` | Direct entry point for the synthetic 118-bus case |
 | `examples/lv_400v_streets_ybus_demo.jl` | Direct entry point for the synthetic LV street network |
 | `examples/tiled_grid_scaling_demo.jl` | Parametric tiled grid with configurable bus count and timing measurement |
+| `examples/pst_ybus_demo.jl` | Phase-shifting transformer: both embeddings, angle sweep, regulated PST |
+| `examples/pegase_matpower_demo.jl` | PEGASE 2869 from a MATPOWER file (downloaded on first use), sparse solve, comparison with the stored state |
 
 The example files should mainly:
 
@@ -318,7 +322,9 @@ flowchart TD
 | Synthetic 118-bus case | included | integration-scale case, not the official IEEE 118 case |
 | Synthetic LV network | included | radial 400 V PQ network, not a real grid |
 | Parametric tiled grid | included | configurable bus count and timing measurement |
-| MATPOWER/CGMES import | not included | no external import workflow |
+| CGMES import | not included | no external import workflow |
+| Transformers and phase shifters | supported | complex tap, both embeddings of theory Section 6.5, regulated PST outer loop |
+| MATPOWER import | included | angle unit/sign and ratio convention detected from the stored solution |
 | Transformer tap/OLTC control | not included | no industrial control logic |
 | GUI, web API, or service | not included | pure Julia library plus console examples |
 | Formal benchmark suite | not included | timing demo and smoke tests are not a benchmark commitment |

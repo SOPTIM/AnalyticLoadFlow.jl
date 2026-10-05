@@ -32,6 +32,8 @@ include("yamlparams.jl")
 include("utils.jl")
 include("line_flows.jl")
 include("demo_cases.jl")
+include("transformers.jl")
+include("matpower_import.jl")
 
 # --------------------------------------------------------------------------
 # Public API
@@ -77,7 +79,22 @@ export
    demo_case_118bus_synthetic,
    demo_case_lv_400v_streets,
    solve_demo_case,
-   compute_demo_mismatch
+   compute_demo_mismatch,
+   # Germ
+   apslf_germ,
+   # Transformers / phase shifters
+   pi_branch,
+   transformer_branch,
+   build_ybus,
+   branch_flows,
+   branch_active_power,
+   print_branch_flows,
+   demo_9bus_branches,
+   demo_case_9bus_pst,
+   solve_pf_pst_regulated,
+   # MATPOWER import
+   parse_matpower_m,
+   matpower_case
 
 
 include("precompile.jl")

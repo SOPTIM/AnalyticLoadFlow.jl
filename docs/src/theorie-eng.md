@@ -969,6 +969,8 @@ Two consistent ways to handle this exist:
 
 Both variants describe the same function at $s=1$ but follow different paths in $s$ and therefore have different convergence radii. The reflection condition of Section 2.4 is unaffected: $Y$ enters linearly in both cases.
 
+> **Implementation note.** AnalyticLoadFlow.jl offers both variants through the `germ` keyword. `germ = :deviation` (default) uses $Y_0 = Y - \mathrm{diag}(Y\mathbf{1})$, which has zero row sums for any $Y$; the deviation is then the diagonal matrix of row sums (line charging, bus shunts and the transformer terms above), and the germ is $V_{\mathrm{slack}}\,\mathbf{1}$. `germ = :noload` is variant 2. On large meshed networks whose no-load state lies far from the operating point (PEGASE cases), variant 2 can have a Padé pole inside the unit circle while variant 1 converges; on small networks both agree to machine precision. The notebook `workshop_pst` works both variants by hand.
+
 A **regulated** phase shifter, whose angle $\varphi$ is adjusted to meet an active-power setpoint on the branch, is a different matter. The angle enters the matrix through $e^{j\varphi}$, i.e. not polynomially, so it cannot simply be expanded inside the recursion. In practice it is handled like PV buses and reactive limits: an outer loop adjusts $\varphi$, and APSLF is restarted with the updated matrix (compare Section 6.2). The numerical examples of Section 7 do not include transformers.
 
 ---

@@ -50,6 +50,44 @@ AnalyticLoadFlow.with_silent
 AnalyticLoadFlow.safe_get
 ```
 
+## Germ and Embedding
+
+```@docs
+AnalyticLoadFlow.apslf_germ
+AnalyticLoadFlow.apslf_noload_germ
+AnalyticLoadFlow.apslf_row_sums
+```
+
+## Branches, Transformers and Phase Shifters
+
+```@docs
+AnalyticLoadFlow.pi_branch
+AnalyticLoadFlow.transformer_branch
+AnalyticLoadFlow.branch_admittances
+AnalyticLoadFlow.build_ybus
+AnalyticLoadFlow.branch_flows
+AnalyticLoadFlow.branch_active_power
+AnalyticLoadFlow.print_branch_flows
+AnalyticLoadFlow.demo_9bus_branches
+AnalyticLoadFlow.demo_case_9bus_pst
+AnalyticLoadFlow.solve_pf_pst_regulated
+```
+
+## MATPOWER Import
+
+```@docs
+AnalyticLoadFlow.parse_matpower_m
+AnalyticLoadFlow.matpower_case
+```
+
+## Demo Cases
+
+```@docs
+AnalyticLoadFlow.build_ybus_from_branches
+AnalyticLoadFlow.demo_case_9bus
+AnalyticLoadFlow.solve_demo_case
+```
+
 ## Post-processing
 
 ```@docs
