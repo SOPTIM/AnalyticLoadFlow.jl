@@ -64,21 +64,50 @@ convention is stamped into a Y-bus, and the one that reproduces the stored
 `(Vm, Va)` with the smallest total power mismatch wins.
 
 ````@example workshop_large_network
-case = matpower_case(path)
+case = with_silent(() -> matpower_case(path))   # its warning about the stored state is discussed below
 conv = case.conventions
+chosen = (conv.angle_unit, conv.angle_sign, conv.ratio_convention)
 println("angle | sign | ratio     | max mismatch | L1 mismatch of the stored state")
 for t in conv.trials
-   @printf("%-5s | %+d   | %-9s | %10.2e   | %10.2e %s\n", t.angle_unit, t.angle_sign, t.ratio_convention, t.ref_mismatch_pu, t.ref_mismatch_l1_pu,
-      (t.angle_unit, t.angle_sign, t.ratio_convention) == (conv.angle_unit, conv.angle_sign, conv.ratio_convention) ? "<- chosen" : "")
+   mark = (t.angle_unit, t.angle_sign, t.ratio_convention) == chosen ? "  <- chosen" : ""
+   @printf("%-5s | %+d   | %-9s | %10.2e   | %10.2e%s\n", t.angle_unit, t.angle_sign, t.ratio_convention, t.ref_mismatch_pu, t.ref_mismatch_l1_pu, mark)
 end
-shifts = [b.shift_deg for b in case.branches if A.is_phase_shifter(b)]
-@printf("\n%d buses, %d branches, %d PV buses, %d transformers, %d phase shifters with angles in [%.1f°, %.1f°]\n",
-   size(case.Y, 1), length(case.branches), count(==(:pv), case.bustype), count(A.is_transformer, case.branches), length(shifts), minimum(shifts), maximum(shifts))
 ````
 
-The remaining mismatch of the stored state (about 0.5 pu at the PST buses)
-is a property of the file, not of the import: the stored voltages were not
-produced with exactly this branch model.
+Radians with the opposite sign win by two orders of magnitude. The network
+at a glance:
+
+````@example workshop_large_network
+nbus = size(case.Y, 1)
+shifts = [b.shift_deg for b in case.branches if A.is_phase_shifter(b)]
+@printf("%d buses, %d branches, %d PV buses\n", nbus, length(case.branches), count(==(:pv), case.bustype))
+@printf("%d transformers, %d of them phase shifters (angles from %.1f° to %.1f°)\n",
+   count(A.is_transformer, case.branches), length(shifts), minimum(shifts), maximum(shifts))
+````
+
+Even the chosen convention leaves a residual of 0.5 pu. Where does it sit?
+The per-bus mismatch of the stored state on the imported Y-bus (P at every
+non-slack bus, Q at PQ buses):
+
+````@example workshop_large_network
+Sref = A.calc_injections(case.Y, case.V_ref)
+mis = [k == case.slack ? 0.0 :
+       max(abs(real(Sref[k]) - case.Pspec[k]), case.bustype[k] == :pq ? abs(imag(Sref[k]) - case.Qspec[k]) : 0.0)
+       for k = 1:nbus]
+pst_buses = Set(Iterators.flatten((b.i, b.j) for b in case.branches if A.is_phase_shifter(b)))
+for k in sortperm(mis, rev = true)[1:3]
+   @printf("bus %-5s mismatch %.3f pu %s\n", case.labels[k], mis[k], k in pst_buses ? "(PST terminal)" : "")
+end
+@printf("%d buses above 1e-3 pu, %d of them PST terminals (%d PST terminals in total)\n",
+   count(>(1e-3), mis), count(k -> mis[k] > 1e-3 && k in pst_buses, 1:nbus), length(pst_buses))
+````
+
+The large residual sits at two of the 24 PST terminals (0.51 pu at bus 58,
+0.11 pu at bus 6153); about two hundred other buses carry between 1e-3 and
+1e-2 pu. This is a property of the file, not of the import: the stored
+voltages were not produced with exactly this branch model. The solver below
+does not use them; they only serve for the convention check and for the
+comparison at the end of Section 3.
 
 ## 3. Solving
 
