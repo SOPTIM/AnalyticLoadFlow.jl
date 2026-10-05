@@ -262,6 +262,7 @@ for n = 1:3
    @printf("  n = %d   V2 = %s   W2 = %s   |Δ to hand| = %.1e\n", n, c(Vc[1, n+1]), c(Wc[1, n+1]), abs(Vc[1, n+1] - V2[1, n+1]))
 end
 @printf("solver V2 at s = 1: %s   article: +0.964029 -0.119926im   |Δ| = %.1e\n", c(Vs[2]), abs(Vs[2] - (0.964029 - 0.119926im)))
+@assert abs(Vs[2] - (0.964029 - 0.119926im)) < 1e-6   #src
 
 ## Residual of the physical load-flow equation at bus 2: conj(V2) * I2 - conj(S2)
 ## with I2 = y (V2 - V1) + ysh2 V2 the current leaving bus 2. Zero means "is a solution".
@@ -303,6 +304,7 @@ println("germ        V2^(0)                   V2 at s = 1              residual"
 for germ in (:flat, :noload, :deviation)
    Vg, Vcg, _ = A.apslf_pq(Y2, S; slack = 1, order = 10, germ = germ)
    @printf("%-11s %-24s %-24s %.1e\n", germ, c(Vcg[1, 1]), c(Vg[2]), residual(Vg))
+   @assert (germ == :flat) == (residual(Vg) > 1e-3)   #src
 end
 
 # - `:flat` starts at $V_2^{(0)} = 1$, which is not a solution at $s = 0$.
@@ -458,6 +460,7 @@ println("article:           0.918383-0.102390im  0.895249-0.129200im  0.873961-0
 Vsol, Vc4, _ = A.apslf_pq(Y4, S4; slack = 1, order = 40, use_pade = true, germ = :deviation)
 for n = 1:3
    @printf("solver n = %d   max |Δ to hand| = %.1e   max |Δ to article| = %.1e\n", n, maximum(abs.(Vc4[:, n+1] .- V4h[:, n+1])), maximum(abs.(Vc4[:, n+1] .- article[n])))
+   @assert maximum(abs.(Vc4[:, n+1] .- V4h[:, n+1])) < 1e-12   #src
 end
 @printf("solver at s = 1 (Padé): V2 = %s   V3 = %s   V4 = %s\n", c(Vsol[2]), c(Vsol[3]), c(Vsol[4]))
 
@@ -619,6 +622,7 @@ for i = 1:9
    @printf("%-5s %-6s %.5f   %8.4f°   %7.4f%s\n", case.labels[i], res.bustype[i], abs(res.V[i]), rad2deg(angle(res.V[i])), res.Q[i], note)
 end
 @printf("\nmax power mismatch on the physical Y-bus: %.2e pu\n", mismatch(case, res))
+@assert res.converged && mismatch(case, res) < 1e-10 && res.bustype[3] == :pq   #src
 
 # ### 5. The series behind the numbers
 #
@@ -681,7 +685,8 @@ end
 #md # [Section 5.2](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#52-padé-approximation-from-series-to-quotient).
 # A rational function can represent the voltage **beyond** the convergence
 # radius of the polynomial (analytic continuation), which is why the
-# solver uses Padé by default. On this easy case both must agree.
+# solver offers it: `use_pade = true`. `solve_pf_apslf` sums the plain
+# Taylor series unless asked. On this easy case both must agree.
 
 c5 = Vcoef[5, :]                                 # the 41 coefficients of bus 5 (a load bus)
 taylor = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :taylor)).voltage   # plain sum
@@ -702,20 +707,39 @@ pade = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :pade)).voltage    
 # traffic light: GRN above 0.3, YEL above 0.1, RED below.
 #
 # The experiment: scale all injections by a factor and watch the nearest
-# pole move towards $s = 1$. Two observations: the distance shrinks as the
-# loading grows, and at factor 2 the load flow already has no solution
-# while the level is still GRN. The indicator is a heuristic margin, not a
-# certificate; read it as a trend, together with `converged` and the
-# mismatch.
+# pole. The table also prints the pole itself and the root-test estimate of
+# the convergence radius, $\min_k |V^{(k)}|^{-1/k}$ over the last orders
+# (above 1: the series converges at $s = 1$). The solves use Padé, so a
+# heavily loaded case that still has a solution is not lost to a slowly
+# converging Taylor sum.
 
-println("load factor  converged   min |V|   pole distance   level")
-for factor in (1.0, 1.5, 2.0, 2.5)
+println("load factor  converged   min |V|   nearest pole        distance  level   radius")
+for factor in (1.0, 1.5, 2.0, 2.5, 3.0)
    ## same case, all injections scaled; reactive limits switched off so only the loading changes
    heavy = merge(case, (Pspec = factor .* case.Pspec, Qspec = factor .* case.Qspec, Qmin = fill(-1e9, 9), Qmax = fill(1e9, 9)))
-   rh = solve_pf_apslf(heavy; order = 40, nr_polish = false, return_coeffs = true)
+   rh = solve_pf_apslf(heavy; order = 40, use_pade = true, nr_polish = false, return_coeffs = true)
    st = A.stability_from_Vcoeff(rh.Vcoeff; slack = 1, order = 40)   # st.dmin = distance of the nearest pole to s = 1
-   @printf("   × %.1f      %-9s   %.4f    %.3f           %s\n", factor, rh.converged, minimum(abs.(rh.V)), st.dmin, A.st_level(st.dmin))
+   radius = minimum(maximum(abs.(rh.Vcoeff[:, k+1]))^(-1 / k) for k = 30:40)
+   @printf("   × %.1f      %-9s   %.4f    %6.3f %+6.3fim    %.3f     %s     %.2f\n", factor, rh.converged, minimum(abs.(rh.V)),
+      real(st.pole), imag(st.pole), st.dmin, A.st_level(st.dmin), radius)
+   @assert rh.converged == (factor < 3)   #src
 end
+
+# What the table shows:
+#
+# - From factor 1.5 on, the nearest pole sits on the real axis and moves
+#   towards $s = 1$ as the loading grows; the radius estimate falls with it.
+#   At factor 3 the pole is practically at $s = 1$, the radius is close to
+#   1 and the load flow has no solution any more (a Newton solve from the
+#   same point fails as well).
+# - At factor 1 the indicator says YEL although this is the easiest case:
+#   the nearest "pole" lies off the real axis. The coefficients have decayed
+#   to rounding level long before order 40, and the Padé approximant of
+#   such a series has spurious poles. The radius estimate, read from the
+#   coefficients directly, does not have this problem.
+#
+# The pole distance is a heuristic margin, not a certificate. Read it as a
+# trend, together with `converged`, the mismatch and the radius estimate.
 
 # ### 6. The germ on the 9-bus case
 #
@@ -753,6 +777,7 @@ println("germ        converged   max mismatch (pu)   min |V| (pu)")
 for germ in (:deviation, :noload, :flat)
    rg = solve_pf_apslf(case; order = 40, nr_polish = false, germ = germ)
    @printf("%-11s %-11s %.2e            %.3f\n", germ, rg.converged, mismatch(case, rg), minimum(abs.(rg.V)))
+   @assert (germ == :flat) == (mismatch(case, rg) > 0.1)   #src
 end
 
 # The **Newton polish** (`nr_polish = true`) runs a few Newton-Raphson
@@ -812,6 +837,7 @@ for mode in (:direct, :outer)
    rm_ = solve_pf_apslf(case; mode = mode, order = 40, nr_polish = false)   # limits enforced (default)
    sw = get(rm_, :switch_log, ())                 # one entry per PV→PQ switch
    @printf("mode = %-7s converged = %-5s outer iterations = %d  switches = %d  |V3| = %.4f  Q3 = %.4f  Q2 = %.4f pu\n", mode, rm_.converged, rm_.outer_iters, length(sw), abs(rm_.V[3]), rm_.Q[3], rm_.Q[2])
+   @assert rm_.converged && length(sw) == 1 && sw[1].bus == 3   #src
    for e in sw
       @printf("   outer pass %d: bus %d hit its %s limit (Q at the switch = %.4f pu)\n", e.outer, e.bus, e.side, e.qinj)
    end
@@ -851,6 +877,7 @@ rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false)              # w
 t = @elapsed rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false) # timed run
 @printf("118 buses, nnz(Y) = %d (of %d entries)\n", nnz(sparse_case.Y), length(sparse_case.Y))
 @printf("converged = %s, mode = %s, max mismatch = %.1e pu, solve time %.3f s\n", rs.converged, rs.effective_mode, mismatch(case118, rs), t)
+@assert rs.converged && mismatch(case118, rs) < 1e-10   #src
 
 # The mismatch is at machine precision again: same recursion, same germ,
 # same Padé evaluation as on nine buses.
@@ -869,6 +896,7 @@ for mode in (:direct, :outer)
    rm118 = solve_pf_apslf(sparse_case; mode = mode, order = 40, nr_polish = false)
    t118 = @elapsed rm118 = solve_pf_apslf(sparse_case; mode = mode, order = 40, nr_polish = false)
    @printf("%-8s %-11s %2d             %.1e                 %.3f s\n", mode, rm118.converged, rm118.outer_iters, maximum(abs.(abs.(rm118.V[pv118]) .- case118.Vm[pv118])), t118)
+   @assert rm118.converged == (mode == :direct)   #src
 end
 
 # This is the practical reason `mode = :direct` is the default: the outer

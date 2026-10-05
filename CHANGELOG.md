@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Workshop notebooks: the large-network notebook solves PEGASE 2869 with Padé (the Taylor sum stopped at 2e-8 pu and reported `converged = false`), shows the root-test radius instead of a pole distance that contradicted the text, and locates the residual of the stored state correctly; the main workshop's loading experiment uses Padé and no longer claims that factor 2 has no solution; "the solver uses Padé by default" corrected (`use_pade = true` selects it).
+- The notebook generator installs the General registry when the depot has none (fresh CI runner).
+
+### Added
+- `docs/test_notebooks.jl` runs every notebook source in a fresh process and fails on an error or a warning; `@assert ... #src` lines in the sources check the results against the text. CI runs it on Julia 1.12 and 1.13.
+
 ## Version 0.10.0
 
 ### Added

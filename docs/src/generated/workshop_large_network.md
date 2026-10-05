@@ -113,11 +113,14 @@ comparison at the end of Section 3.
 
 `Y` is sparse, and so is the whole solver: no conversion is needed. The
 default embedding (`germ = :deviation`) keeps the flat germ and ramps bus
-shunts and transformer deviations up with $s$. No Newton polish is needed.
+shunts and transformer deviations up with $s$. The series is evaluated at
+$s = 1$ with Padé approximants; no Newton polish is needed. (The plain
+Taylor sum of 40 terms stops at a mismatch of about 2e-8 pu here, just
+above the 1e-8 tolerance.)
 
 ````@example workshop_large_network
-res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
-t = @elapsed res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
+res = solve_pf_apslf(case; order = 40, use_pade = true, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
+t = @elapsed res = solve_pf_apslf(case; order = 40, use_pade = true, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
 @printf("converged = %s, mode = %s, outer iterations = %d, %.3f s\n", res.converged, res.effective_mode, res.outer_iters, t)
 @printf("max mismatch on the physical Y-bus = %.1e pu,  |V| in [%.4f, %.4f] pu\n", mismatch(case, res), minimum(abs.(res.V)), maximum(abs.(res.V)))
 dV = abs.(res.V .- case.V_ref)
@@ -130,15 +133,20 @@ Both exact embeddings of theory Section 6.5 give the same solution when the
 series converges at $s = 1$. On a large meshed network they behave very
 differently. The no-load state of PEGASE, with all loads switched off, is
 far from the operating point (Ferranti rise on long lightly loaded lines),
-so the `:noload` path has a Padé pole inside the unit circle and the series
-diverges. The `:deviation` path starts at 1 pu everywhere and converges.
+so the `:noload` path has a singularity close to $s = 0$ and the series
+diverges at $s = 1$. The `:deviation` path starts at 1 pu everywhere and
+converges.
+
+The coefficients show it directly. The root test $|V^{(k)}|^{-1/k}$ over the
+last orders estimates the radius of convergence: above 1 the series
+converges at $s = 1$, below 1 it does not.
 
 ````@example workshop_large_network
 for germ in (:deviation, :noload)
    V, _, Vc, _, _ = A.apslf_pf_pv_direct(case.Y, case.bustype, case.Pspec, case.Qspec, case.Vm; slack = case.slack, Vslack = ComplexF64(case.Vm[case.slack], 0), order = 40, self_check = false, germ = germ)
-   st = A.stability_from_Vcoeff(Vc; slack = case.slack, order = 40)
-   @printf("germ = %-10s |V^(0)| max = %.2f   |V^(10)| max = %.1e   |V^(40)| max = %.1e   pole distance %.3f (%s)\n",
-      germ, maximum(abs.(Vc[:, 1])), maximum(abs.(Vc[:, 11])), maximum(abs.(Vc[:, 41])), st.dmin, A.st_level(st.dmin))
+   radius = minimum(maximum(abs.(Vc[:, k+1]))^(-1 / k) for k = 37:40)
+   @printf("germ = %-10s |V^(0)| max = %.2f   |V^(10)| max = %.1e   |V^(40)| max = %.1e   radius ≈ %.3f\n",
+      germ, maximum(abs.(Vc[:, 1])), maximum(abs.(Vc[:, 11])), maximum(abs.(Vc[:, 41])), radius)
 end
 ````
 
@@ -149,7 +157,7 @@ leave their band to PQ and re-solves; each outer iteration is one full
 series evaluation.
 
 ````@example workshop_large_network
-res_q = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = true)
+res_q = solve_pf_apslf(case; order = 40, use_pade = true, nr_polish = false, enforce_q_limits = true)
 sw = get(res_q, :switch_log, ())
 @printf("converged = %s, outer iterations = %d, PV→PQ switches = %d, max mismatch = %.1e pu\n", res_q.converged, res_q.outer_iters, length(sw), mismatch(case, res_q))
 nmax = count(e -> e.side == :max, sw)
