@@ -128,12 +128,12 @@ end
 # `Y` is sparse, and so is the whole solver: no conversion is needed. The
 # default embedding (`germ = :deviation`) keeps the flat germ and ramps bus
 # shunts and transformer deviations up with $s$. The series is evaluated at
-# $s = 1$ with Padé approximants; no Newton polish is needed. (The plain
-# Taylor sum of 40 terms stops at a mismatch of about 2e-8 pu here, just
-# above the 1e-8 tolerance.)
+# $s = 1$ with Padé approximants (the default); no Newton polish is needed.
+# (With `use_pade = false` the plain Taylor sum of 40 terms stops at a
+# mismatch of about 2e-8 pu here, just above the 1e-8 tolerance.)
 
-res = solve_pf_apslf(case; order = 40, use_pade = true, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
-t = @elapsed res = solve_pf_apslf(case; order = 40, use_pade = true, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
+res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
+t = @elapsed res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
 @printf("converged = %s, mode = %s, outer iterations = %d, %.3f s\n", res.converged, res.effective_mode, res.outer_iters, t)
 @assert res.converged && res.outer_iters == 1 && mismatch(case, res) < 1e-8   #src
 @printf("max mismatch on the physical Y-bus = %.1e pu,  |V| in [%.4f, %.4f] pu\n", mismatch(case, res), minimum(abs.(res.V)), maximum(abs.(res.V)))
@@ -168,7 +168,7 @@ end
 # leave their band to PQ and re-solves; each outer iteration is one full
 # series evaluation.
 
-res_q = solve_pf_apslf(case; order = 40, use_pade = true, nr_polish = false, enforce_q_limits = true)
+res_q = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = true)
 sw = get(res_q, :switch_log, ())
 @printf("converged = %s, outer iterations = %d, PV→PQ switches = %d, max mismatch = %.1e pu\n", res_q.converged, res_q.outer_iters, length(sw), mismatch(case, res_q))
 @assert res_q.converged && mismatch(case, res_q) < 1e-8   #src

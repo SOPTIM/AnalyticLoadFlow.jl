@@ -2669,7 +2669,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    slack::Int = 1,
    Vslack::Union{Nothing,ComplexF64} = nothing,
    order::Int = 24,
-   use_pade::Bool = false,
+   use_pade::Bool = true,
    germ::Symbol = :deviation,    # :deviation | :noload | :flat
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    inner::Symbol = :pq,          # :pq | :direct_pv

@@ -685,8 +685,8 @@ end
 #md # [Section 5.2](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#52-padé-approximation-from-series-to-quotient).
 # A rational function can represent the voltage **beyond** the convergence
 # radius of the polynomial (analytic continuation), which is why the
-# solver offers it: `use_pade = true`. `solve_pf_apslf` sums the plain
-# Taylor series unless asked. On this easy case both must agree.
+# solver uses it by default (`use_pade = false` sums the plain series). On
+# this easy case both must agree.
 
 c5 = Vcoef[5, :]                                 # the 41 coefficients of bus 5 (a load bus)
 taylor = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :taylor)).voltage   # plain sum
@@ -709,9 +709,9 @@ pade = A.evaluate_series(c5, A.APSLFEvaluationOptions(mode = :pade)).voltage    
 # The experiment: scale all injections by a factor and watch the nearest
 # pole. The table also prints the pole itself and the root-test estimate of
 # the convergence radius, $\min_k |V^{(k)}|^{-1/k}$ over the last orders
-# (above 1: the series converges at $s = 1$). The solves use Padé, so a
-# heavily loaded case that still has a solution is not lost to a slowly
-# converging Taylor sum.
+# (above 1: the series converges at $s = 1$). The solves use Padé (the
+# default), so a heavily loaded case that still has a solution is not lost
+# to a slowly converging Taylor sum.
 
 println("load factor  converged   min |V|   nearest pole        distance  level   radius")
 for factor in (1.0, 1.5, 2.0, 2.5, 3.0)
