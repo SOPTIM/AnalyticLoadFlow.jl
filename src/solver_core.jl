@@ -3805,50 +3805,39 @@ function _solve_pf_apslf_with_pv_q_limits(
          V, Sinj_inner, Vcoeff_opt = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
          copyto!(Sinj, Sinj_inner)
       catch err
-         if _is_nonfinite_inner_error(err)
-            # Fallback for hard cases: when the PQ inner solve becomes non-finite,
-            # try one direct-PV inner evaluation before declaring failure.
-            if inner == :pq
-               fallback_inner = (nbus >= sparse_nbus_min) ? :direct_pv_sparse : :direct_pv
-               local Vfb, Sfb, Cfb
-               try
-                  inner_kernel[] = fallback_inner
-                  Vfb, Sfb, Cfb = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
-                  V .= Vfb
-                  Sinj .= Sfb
-                  Vcoeff_opt = Cfb
-               catch fb_err
-                  _is_nonfinite_inner_error(fb_err) || rethrow(fb_err)
-                  inner_kernel[] = inner
-                  print_final_report(false, outer, V, Q)
-                  return make_result(
-                     V = V,
-                     Sinj = Sinj,
-                     bt = bt,
-                     Q = Q,
-                     converged = false,
-                     outer_iters = outer,
-                     reason = :nonfinite_inner_state,
-                     Vcoeff = return_coeffs ? Vcoeff_last : nothing,
-                  )
-               end
+         _is_nonfinite_inner_error(err) || rethrow(err)
+         # Fallback for hard cases: when the PQ inner solve becomes non-finite,
+         # try one direct-PV inner evaluation before declaring failure. On
+         # success the outer loop continues with the fallback state.
+         fallback_ok = false
+         if inner == :pq
+            fallback_inner = (nbus >= sparse_nbus_min) ? :direct_pv_sparse : :direct_pv
+            try
+               inner_kernel[] = fallback_inner
+               Vfb, Sfb, Cfb = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
+               V .= Vfb
+               Sinj .= Sfb
+               Vcoeff_opt = Cfb
+               fallback_ok = true
+            catch fb_err
+               _is_nonfinite_inner_error(fb_err) || rethrow(fb_err)
+            finally
                inner_kernel[] = inner
-               # Continue with fallback state.
-            else
-               print_final_report(false, outer, V, Q)
-               return make_result(
-                  V = V,
-                  Sinj = Sinj,
-                  bt = bt,
-                  Q = Q,
-                  converged = false,
-                  outer_iters = outer,
-                  reason = :nonfinite_inner_state,
-                  Vcoeff = return_coeffs ? Vcoeff_last : nothing,
-               )
             end
          end
-         rethrow(err)
+         if !fallback_ok
+            print_final_report(false, outer, V, Q)
+            return make_result(
+               V = V,
+               Sinj = Sinj,
+               bt = bt,
+               Q = Q,
+               converged = false,
+               outer_iters = outer,
+               reason = :nonfinite_inner_state,
+               Vcoeff = return_coeffs ? Vcoeff_last : nothing,
+            )
+         end
       end
       if return_coeffs
          Vcoeff_last .= Vcoeff_opt
