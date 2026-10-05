@@ -1,35 +1,26 @@
 # Changelog
 
-## Unreleased
-
-### Changed
-- `solve_pf_apslf` and `solve_pf_apslf_with_pv_q_limits` evaluate the series with Padé only; the plain Taylor sum stopped short of the tolerance on large networks and reported `converged = false` for solvable cases. `use_pade` is accepted without effect, and the `mode` of `evaluation_options` is set to `:pade`.
-- The direct PV kernel is the default everywhere: `solve_pf_apslf_with_pv_q_limits` and `solve_demo_case` now default to `inner = :direct_pv` (`solve_pf_apslf` already used `mode = :direct`).
-- Supported: direct mode, Padé evaluation, `germ = :deviation`. The outer mode (`mode = :outer`, `inner = :pq`), the Taylor evaluation and the germs `:noload` and `:flat` are marked experimental in docstrings, docs and notebooks.
-
-- `stability_from_Vcoeff` cuts each series where its coefficients reach rounding level and drops spurious pole-zero doublets before taking the nearest pole; it also returns `radius` (root-test estimate of the convergence radius) and `level` (RED when `radius < 1`, else by pole distance). `st_level(st)` takes the whole result. Easy cases no longer show spurious poles near `s = 1` (9-bus case: YEL before, GRN now), and a divergent series is RED (PEGASE 2869 with `germ = :noload`: GRN before). An exactly rational series no longer throws.
-
-### Fixed
-- Outer mode (`inner = :pq`, `mode = :outer` and the outer fallback of `mode = :direct`) reports `converged = true` only when the P/Q mismatch is below the tolerance, as in direct mode; before, a result with the flat germ was reported converged at a mismatch of 1.9 pu.
-- Workshop notebooks: the large-network notebook solves PEGASE 2869 with Padé (the Taylor sum stopped at 2e-8 pu and reported `converged = false`), shows the root-test radius instead of a pole distance that contradicted the text, and locates the residual of the stored state correctly; the main workshop's loading experiment uses Padé and no longer claims that factor 2 has no solution; "the solver uses Padé by default" corrected (`use_pade = true` selects it).
-- The notebook generator installs the General registry when the depot has none (fresh CI runner).
-
-### Added
-- `docs/test_notebooks.jl` runs every notebook source in a fresh process and fails on an error or a warning; `@assert ... #src` lines in the sources check the results against the text. CI runs it on Julia 1.12 and 1.13.
-
 ## Version 0.10.0
 
 ### Added
 - Transformer branches with ratio and phase shift (PST): `pi_branch`, `transformer_branch`, `build_ybus` (dense or sparse), `branch_flows`, `branch_active_power`, `print_branch_flows`, the 9-bus PST case `demo_case_9bus_pst` and `solve_pf_pst_regulated`, an outer secant loop on the angle of a regulated phase shifter (theory Section 6.5). A fixed shift is exact with the default `germ = :deviation`.
 - MATPOWER case reader (`parse_matpower_m`, `matpower_case`) that detects the angle unit, the angle sign and the ratio convention from the stored solution; PEGASE 2869 example.
 - Notebooks "Transformers and PST" and "Large network (PEGASE)".
+- `docs/test_notebooks.jl` runs every notebook source in a fresh process and fails on an error or a warning; `@assert ... #src` lines in the sources check the results against the text. CI runs it on Julia 1.12 and 1.13.
 
 ### Changed
+- Supported: direct mode, Padé evaluation, `germ = :deviation`. The outer mode (`mode = :outer`, `inner = :pq`), the Taylor evaluation and the germs `:noload` and `:flat` are experimental.
+- `solve_pf_apslf` and `solve_pf_apslf_with_pv_q_limits` evaluate the series with Padé only; the plain Taylor sum stopped short of the tolerance on large networks and reported `converged = false` for solvable cases. `use_pade` is accepted without effect, and the `mode` of `evaluation_options` is set to `:pade`.
+- The direct PV kernel is the default everywhere: `solve_pf_apslf_with_pv_q_limits` and `solve_demo_case` now default to `inner = :direct_pv` (`solve_pf_apslf` already used `mode = :direct`).
 - The solver is sparse only. `Y` may still be passed dense or sparse; it is converted to `SparseMatrixCSC` once on entry. The dense direct PV kernel, the dense Jacobian and the dense-direct retry in `solve_pf_apslf` are removed. Existing calls keep working: `apslf_pf_pv_direct_sparse` and `inner = :direct_pv_sparse` are the same kernel as `apslf_pf_pv_direct` and `:direct_pv`; `use_sparse`, `sparse_nbus_min` and `dense_fallback_nbus_max` are accepted without effect.
-- Precompile and first call are much shorter: the solver compiles only the path a solve takes (inner kernel, germ variant, debug and report output) instead of every branch, and the Padé and Newton steps call `lu` instead of the `\` polyalgorithm. Results are unchanged on the test and benchmark cases.
+- `stability_from_Vcoeff` cuts each series where its coefficients reach rounding level and drops spurious pole-zero doublets before taking the nearest pole; it also returns `radius` (root-test estimate of the convergence radius) and `level` (RED when `radius < 1`, else by pole distance). `st_level(st)` takes the whole result. Easy cases no longer show spurious poles near `s = 1` (9-bus case: YEL before, GRN now), and a divergent series is RED (PEGASE 2869 with `germ = :noload`: GRN before). An exactly rational series no longer throws.
+- Precompile and first call are much shorter: the solver compiles only the path a solve takes (inner kernel, germ variant, debug and report output) instead of every branch, and the Padé and Newton steps call `lu` instead of the `\` polyalgorithm.
 
 ### Fixed
+- Outer mode (`inner = :pq`, `mode = :outer` and the outer fallback of `mode = :direct`) reports `converged = true` only when the P/Q mismatch is below the tolerance, as in direct mode; before, a result with the flat germ was reported converged at a mismatch of 1.9 pu.
 - After a non-finite PQ inner solve, a successful direct-PV fallback is now used; before, its result was discarded and the original error raised.
+- Workshop notebooks: outputs and text agree again. PEGASE 2869 converges without Newton polish (Padé), the germ comparison shows the convergence radius, the residual of the stored state is located correctly (two PST terminals), and the loading experiment no longer claims that factor 2 has no solution.
+- The notebook generator installs the General registry when the depot has none (fresh CI runner).
 
 ## Version 0.9.16
 
