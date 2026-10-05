@@ -98,7 +98,7 @@ shifts = [b.shift_deg for b in case.branches if A.is_phase_shifter(b)]
 
 # ## 3. Solving
 #
-# `Y` is sparse, so `solve_pf_apslf` uses the sparse direct PV kernel. The
+# `Y` is sparse, and so is the whole solver: no conversion is needed. The
 # default embedding (`germ = :deviation`) keeps the flat germ and ramps bus
 # shunts and transformer deviations up with $s$. No Newton polish is needed.
 
@@ -119,7 +119,7 @@ dV = abs.(res.V .- case.V_ref)
 # diverges. The `:deviation` path starts at 1 pu everywhere and converges.
 
 for germ in (:deviation, :noload)
-   V, _, Vc, _, _ = A.apslf_pf_pv_direct_sparse(case.Y, case.bustype, case.Pspec, case.Qspec, case.Vm; slack = case.slack, Vslack = ComplexF64(case.Vm[case.slack], 0), order = 40, self_check = false, germ = germ)
+   V, _, Vc, _, _ = A.apslf_pf_pv_direct(case.Y, case.bustype, case.Pspec, case.Qspec, case.Vm; slack = case.slack, Vslack = ComplexF64(case.Vm[case.slack], 0), order = 40, self_check = false, germ = germ)
    st = A.stability_from_Vcoeff(Vc; slack = case.slack, order = 40)
    @printf("germ = %-10s |V^(0)| max = %.2f   |V^(10)| max = %.1e   |V^(40)| max = %.1e   pole distance %.3f (%s)\n",
       germ, maximum(abs.(Vc[:, 1])), maximum(abs.(Vc[:, 11])), maximum(abs.(Vc[:, 41])), st.dmin, A.st_level(st.dmin))

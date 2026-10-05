@@ -6,6 +6,7 @@
 AnalyticLoadFlow.solve_pf_apslf
 AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits
 AnalyticLoadFlow.apslf_pf_pv_direct
+AnalyticLoadFlow.apslf_pf_pv_direct_sparse
 AnalyticLoadFlow.apslf_pq
 ```
 
@@ -29,12 +30,12 @@ AnalyticLoadFlow.APSLFPQWorkspace
 AnalyticLoadFlow.build_apslf_pq_workspace
 AnalyticLoadFlow.NRRectCache
 AnalyticLoadFlow.build_nr_rect_cache
+AnalyticLoadFlow.sparse_Y
 AnalyticLoadFlow.maybe_sparse_Y
 AnalyticLoadFlow.calc_injections
 AnalyticLoadFlow.calc_injections!
 AnalyticLoadFlow.mismatch_rectangular!
 AnalyticLoadFlow.build_rect_jac_sparse
-AnalyticLoadFlow.build_rect_jac_dense
 AnalyticLoadFlow.nr_refine_step_rect!
 ```
 

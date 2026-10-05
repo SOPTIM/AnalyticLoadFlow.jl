@@ -403,11 +403,11 @@ check: make bus 3 a PV bus at exactly the magnitude it reached in the PQ
 solution. The PV solver must then reproduce the PQ voltages and return
 the PQ reactive power $Q_3 = -0.175$.
 
-`apslf_pf_pv_direct(Y, bustype, P, Q, Vm; ...)` is the dense kernel,
-`apslf_pf_pv_direct_sparse` the sparse one; both take the bus types, the
+`apslf_pf_pv_direct(Y, bustype, P, Q, Vm; ...)` takes the bus types, the
 specified $P$ and $Q$ (the $Q$ of PV buses is ignored) and the voltage
-setpoints `Vm` (only used at PV buses). They return the voltages, the
-reactive injections of the PV buses and diagnostics.
+setpoints `Vm` (only used at PV buses). It returns the voltages, the
+reactive injections of the PV buses and diagnostics. Like the whole solver
+it works on a sparse matrix; the dense `Y4` is converted on entry.
 
 ````@example workshop_apslf
 Vm3 = abs(Vsol[3])                               # |V3| of the PQ solution becomes the setpoint
@@ -415,10 +415,8 @@ bt = [:slack, :pq, :pv, :pq]                     # bus 3 is now a PV bus
 P = real.(S4)
 Q = imag.(S4)
 Vm = [1.0, 1.0, Vm3, 1.0]                        # setpoints; only the PV entry is used
-for kern in (A.apslf_pf_pv_direct, A.apslf_pf_pv_direct_sparse)
-   Vpv, Qpv, _, _, _ = kern(Y4, bt, P, Q, Vm; slack = 1, order = 40, self_check = false)
-   @printf("%-26s max |V - V_pq| = %.1e   Q3 = %.6f (PQ case: %.6f)\n", nameof(kern), maximum(abs.(Vpv .- Vsol)), Qpv[1], Q[3])
-end
+Vpv, Qpv, _, _, _ = A.apslf_pf_pv_direct(Y4, bt, P, Q, Vm; slack = 1, order = 40, self_check = false)
+@printf("max |V - V_pq| = %.1e   Q3 = %.6f (PQ case: %.6f)\n", maximum(abs.(Vpv .- Vsol)), Qpv[1], Q[3])
 ````
 
 All three checks agree with the article to the printed digits, and the
@@ -441,7 +439,7 @@ and looks at what the solver does step by step.
 
 | Field | Meaning |
 |:--|:--|
-| `Y` | bus admittance matrix, dense or sparse |
+| `Y` | bus admittance matrix, dense or sparse (converted to sparse on entry) |
 | `bustype` | `:slack`, `:pv` or `:pq` per bus |
 | `Pspec`, `Qspec` | specified injections in pu, generation positive, load negative |
 | `Vm` | voltage setpoints, used at the slack and the PV buses |
@@ -768,12 +766,11 @@ generators, where the outer loop does not get there at all.
 
 ### 8. Sparse matrices
 
-Nothing in the method depends on the matrix being dense: the recursion
-solves one linear system per order with the **same** matrix, so one
-sparse factorization is reused for every order. Pass a sparse `Y` and
-`solve_pf_apslf` selects the sparse direct PV kernel (the one checked in
-Section 3) automatically. The synthetic 118-bus case that ships with the
-package illustrates it: 11 PV buses, 106 PQ buses. The solve is timed
+The recursion solves one linear system per order with the **same** matrix,
+so one sparse factorization is reused for every order. The solver works on
+sparse matrices only: a dense `Y` is converted once on entry, a sparse `Y`
+is used as it is. The synthetic 118-bus case that ships with the package
+illustrates it: 11 PV buses, 106 PQ buses. The solve is timed
 twice, because the first call of a Julia function includes compilation.
 
 ````@example workshop_apslf
@@ -788,7 +785,7 @@ t = @elapsed rs = solve_pf_apslf(sparse_case; order = 40, nr_polish = false) # t
 ````
 
 The mismatch is at machine precision again: same recursion, same germ,
-same Padé evaluation, only the linear algebra changed.
+same Padé evaluation as on nine buses.
 
 #### Direct vs outer on 118 buses
 

@@ -236,9 +236,9 @@ pinned = solve_pf_pst_regulated(φ -> demo_case_9bus_pst(shift_deg = φ, enforce
 
 ## 6. Sparse Y with transformers
 
-`build_ybus(...; sparse_output = true)` returns a `SparseMatrixCSC`; the
-sparse direct PV kernel handles the non-symmetric pattern of a PST without
-any special treatment.
+`build_ybus(...; sparse_output = true)` returns a `SparseMatrixCSC`, the
+form the solver works on (a dense `Y` is converted on entry). The
+non-symmetric pattern of a PST needs no special treatment.
 
 ````@example workshop_pst
 c = demo_case_9bus_pst(shift_deg = 12.0, sparse_output = true)

@@ -8,7 +8,11 @@
 - Notebooks "Transformers and PST" and "Large network (PEGASE)".
 
 ### Changed
-- Precompile and first call take about half the time: the solver compiles only the path a solve takes (dense or sparse matrix, inner kernel, germ variant, debug and report output) instead of every branch, and the Padé and Newton steps call `lu` instead of the `\` polyalgorithm. Run times and results are unchanged on the test and benchmark cases.
+- The solver is sparse only. `Y` may still be passed dense or sparse; it is converted to `SparseMatrixCSC` once on entry. The dense direct PV kernel, the dense Jacobian and the dense-direct retry in `solve_pf_apslf` are removed. Existing calls keep working: `apslf_pf_pv_direct_sparse` and `inner = :direct_pv_sparse` are the same kernel as `apslf_pf_pv_direct` and `:direct_pv`; `use_sparse`, `sparse_nbus_min` and `dense_fallback_nbus_max` are accepted without effect.
+- Precompile and first call are much shorter: the solver compiles only the path a solve takes (inner kernel, germ variant, debug and report output) instead of every branch, and the Padé and Newton steps call `lu` instead of the `\` polyalgorithm. Results are unchanged on the test and benchmark cases.
+
+### Fixed
+- After a non-finite PQ inner solve, a successful direct-PV fallback is now used; before, its result was discarded and the original error raised.
 
 ## Version 0.9.16
 

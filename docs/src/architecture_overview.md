@@ -316,7 +316,7 @@ flowchart TD
 | NR polish | optional | rectangular Newton method as post-processing |
 | Taylor evaluation | supported | direct evaluation of the series solution |
 | Padé evaluation | supported | rational continuation of the series solution |
-| Sparse Y-bus | supported | sparse matrix for larger networks or the tiled grid |
+| Sparse Y-bus | supported | the solver is sparse only; a dense `Y` is converted once on entry |
 | Line flows | supported | PI line flows and loss sums |
 | 9-bus teaching case | included | PV, PQ, and Q-limit demonstration |
 | Synthetic 118-bus case | included | integration-scale case, not the official IEEE 118 case |
