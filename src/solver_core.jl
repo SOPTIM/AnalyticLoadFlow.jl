@@ -2565,7 +2565,8 @@ Set `enforce_q_limits=false` to disable PV→PQ switching while still reporting
 computed PV reactive injections in `Q`.
 
 Convergence summary:
-- For `inner=:pq`: converged if PV `|V|` errors `< vtol` and no switching occurs; when `nr_polish_Y` is active, post-polish P/Q mismatches on that Y-bus must also satisfy mismatch tolerances.
+- For `inner=:pq`: converged if PV `|V|` errors `< vtol`, no switching occurs and the
+  P/Q mismatches (`maxP/maxQpq`, on `nr_polish_Y` when that is active) are below tolerances.
 - For `inner=:direct_pv`: converged if mismatches (`maxP/maxQpq`) are below tolerances
   and no switching occurs.
 
@@ -3366,7 +3367,7 @@ function _solve_pf_apslf_with_pv_q_limits(
 
       # Return on success
       if inner == :pq
-         pq_mismatch_ok = !use_nr_polish_y_for_post_metrics || ((maxP < mis_tol_p) && (maxQpq < mis_tol_q))
+         pq_mismatch_ok = (maxP < mis_tol_p) && (maxQpq < mis_tol_q)
          if max_v_err < vtol && !switched && !q_limit_violation_pending && pq_mismatch_ok
             print_final_report(true, outer, V, Q)
             return make_result(

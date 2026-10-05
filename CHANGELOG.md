@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+### Changed
+- `solve_pf_apslf` and `solve_pf_apslf_with_pv_q_limits` evaluate the series with Padé by default (`use_pade = true`, as the kernels already did); the plain Taylor sum stopped short of the tolerance on large networks and reported `converged = false` for solvable cases. `use_pade = false` still selects it.
+
 ### Fixed
+- Outer mode (`inner = :pq`, `mode = :outer` and the outer fallback of `mode = :direct`) reports `converged = true` only when the P/Q mismatch is below the tolerance, as in direct mode; before, a result with the flat germ was reported converged at a mismatch of 1.9 pu.
 - Workshop notebooks: the large-network notebook solves PEGASE 2869 with Padé (the Taylor sum stopped at 2e-8 pu and reported `converged = false`), shows the root-test radius instead of a pole distance that contradicted the text, and locates the residual of the stored state correctly; the main workshop's loading experiment uses Padé and no longer claims that factor 2 has no solution; "the solver uses Padé by default" corrected (`use_pade = true` selects it).
 - The notebook generator installs the General registry when the depot has none (fresh CI runner).
 

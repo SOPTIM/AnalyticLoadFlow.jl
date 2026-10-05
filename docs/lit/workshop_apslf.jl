@@ -757,14 +757,13 @@ end
 # - `:flat`: the plain flat germ on the full `Y`, the behaviour before
 #   0.9.15. Not exact here.
 #
-# What the experiment shows: read `converged` and the mismatch
-# **together**. `converged` only reports that the series evaluation
-# succeeded, that the coefficients decayed and the Padé approximant could
-# be built. It says nothing about whether the result solves the network.
-# With the flat germ the series does converge, but to the solution of a
-# **different** problem (the one whose $s = 0$ state is $V = 1$), and that
-# state is 0.6 pu away from the load flow, with a bus at 0.27 pu. Only the
-# mismatch reveals it.
+# What the experiment shows: with the flat germ the series converges, but
+# to the solution of a **different** problem (the one whose $s = 0$ state
+# is $V = 1$). The result does not satisfy the power-flow equations of this
+# network, the mismatch is large, and the solver reports
+# `converged = false`. `converged` is only true when the power mismatch on
+# the physical Y-bus is below the tolerance (`mis_tol_p`, `mis_tol_q`,
+# default 1e-8 pu).
 #
 # Which germ to use: keep the default `:deviation`. It is exact for any
 # `Y`, keeps the germ at nominal voltage and usually has the larger
@@ -777,7 +776,7 @@ println("germ        converged   max mismatch (pu)   min |V| (pu)")
 for germ in (:deviation, :noload, :flat)
    rg = solve_pf_apslf(case; order = 40, nr_polish = false, germ = germ)
    @printf("%-11s %-11s %.2e            %.3f\n", germ, rg.converged, mismatch(case, rg), minimum(abs.(rg.V)))
-   @assert (germ == :flat) == (mismatch(case, rg) > 0.1)   #src
+   @assert (germ == :flat) == (mismatch(case, rg) > 0.1) && rg.converged == (germ != :flat)   #src
 end
 
 # The **Newton polish** (`nr_polish = true`) runs a few Newton-Raphson

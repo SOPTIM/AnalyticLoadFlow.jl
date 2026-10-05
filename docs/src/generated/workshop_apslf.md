@@ -599,8 +599,8 @@ approximant of
 [Section 5.2](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#52-padé-approximation-from-series-to-quotient).
 A rational function can represent the voltage **beyond** the convergence
 radius of the polynomial (analytic continuation), which is why the
-solver offers it: `use_pade = true`. `solve_pf_apslf` sums the plain
-Taylor series unless asked. On this easy case both must agree.
+solver uses it by default (`use_pade = false` sums the plain series). On
+this easy case both must agree.
 
 ````@example workshop_apslf
 c5 = Vcoef[5, :]                                 # the 41 coefficients of bus 5 (a load bus)
@@ -624,9 +624,9 @@ traffic light: GRN above 0.3, YEL above 0.1, RED below.
 The experiment: scale all injections by a factor and watch the nearest
 pole. The table also prints the pole itself and the root-test estimate of
 the convergence radius, $\min_k |V^{(k)}|^{-1/k}$ over the last orders
-(above 1: the series converges at $s = 1$). The solves use Padé, so a
-heavily loaded case that still has a solution is not lost to a slowly
-converging Taylor sum.
+(above 1: the series converges at $s = 1$). The solves use Padé (the
+default), so a heavily loaded case that still has a solution is not lost
+to a slowly converging Taylor sum.
 
 ````@example workshop_apslf
 println("load factor  converged   min |V|   nearest pole        distance  level   radius")
@@ -673,14 +673,13 @@ Section 4) and the slack at 1.04 pu instead of 1.
 - `:flat`: the plain flat germ on the full `Y`, the behaviour before
   0.9.15. Not exact here.
 
-What the experiment shows: read `converged` and the mismatch
-**together**. `converged` only reports that the series evaluation
-succeeded, that the coefficients decayed and the Padé approximant could
-be built. It says nothing about whether the result solves the network.
-With the flat germ the series does converge, but to the solution of a
-**different** problem (the one whose $s = 0$ state is $V = 1$), and that
-state is 0.6 pu away from the load flow, with a bus at 0.27 pu. Only the
-mismatch reveals it.
+What the experiment shows: with the flat germ the series converges, but
+to the solution of a **different** problem (the one whose $s = 0$ state
+is $V = 1$). The result does not satisfy the power-flow equations of this
+network, the mismatch is large, and the solver reports
+`converged = false`. `converged` is only true when the power mismatch on
+the physical Y-bus is below the tolerance (`mis_tol_p`, `mis_tol_q`,
+default 1e-8 pu).
 
 Which germ to use: keep the default `:deviation`. It is exact for any
 `Y`, keeps the germ at nominal voltage and usually has the larger
