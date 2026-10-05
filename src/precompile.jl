@@ -79,7 +79,7 @@ function _precompile_full()
       evaluate_series(rc.Vcoeff[5, :], APSLFEvaluationOptions(mode = :taylor))
       evaluate_series(rc.Vcoeff[5, :], APSLFEvaluationOptions(mode = :pade))
       st = stability_from_Vcoeff(rc.Vcoeff; slack = 1, order = 12)
-      st_level(st.dmin)
+      st_level(st)
 
       # A case whose Y is already sparse
       sparse_case = merge(case, (Y = sparse(case.Y),))

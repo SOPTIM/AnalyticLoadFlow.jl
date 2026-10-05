@@ -735,53 +735,72 @@ function pade_poles(c::AbstractVector{ComplexF64}, L::Int, M::Int)
    return poly_roots(b)
 end
 
+# Roots of a polynomial given by its coefficients (constant term first) after
+# dropping trailing coefficients at rounding level; empty below degree 1.
+function _roots_trimmed(c::AbstractVector{ComplexF64})
+   scale = maximum(abs, c; init = 0.0)
+   n = length(c)
+   while n > 1 && abs(c[n]) <= 1e-14 * scale
+      n -= 1
+   end
+   return n >= 2 ? poly_roots(c[1:n]) : ComplexF64[]
+end
+
 """
-    stability_from_Vcoeff(Vcoeff; slack=1, order=size(Vcoeff,2)-1, max_buses=0, critical_poles=:auto)
+    stability_from_Vcoeff(Vcoeff; slack=1, order=size(Vcoeff,2)-1, max_buses=0, critical_poles=:auto,
+                          rtol=1e-13, doublet_tol=1e-3)
         -> NamedTuple
 
-Compute a heuristic APSLF margin indicator from Padé poles of per-bus voltage series.
+Compute a heuristic APSLF margin indicator from the voltage series coefficients:
+the Padé pole nearest to `s = 1` and a root-test estimate of the radius of
+convergence.
 
 # Arguments
 - `Vcoeff::Matrix{ComplexF64}`: Voltage series coefficients (nbus × order+1)
   - Row `i` contains `[V_i^(0), V_i^(1), ..., V_i^(order)]`
-- `slack::Int = 1`: Slack bus index (excluded from pole analysis)
-- `order::Int = size(Vcoeff,2)-1`: Series order used for Padé construction
+- `slack::Int = 1`: Slack bus index (excluded from the analysis)
+- `order::Int = size(Vcoeff,2)-1`: Highest series order used
 - `max_buses::Int = 0`: If >0, analyze only the first `max_buses` non-slack buses (0 = all)
 - `critical_poles::Union{Symbol,Int} = :auto`: Number of critical poles to report.
   - `:auto`: scale with network size as `ceil(sqrt(n_non_slack))`
   - `k::Int`: return the `k` poles with smallest `|pole - 1|`
+- `rtol = 1e-13`: a series is cut after its last coefficient above `rtol` times
+  its largest coefficient
+- `doublet_tol = 1e-3`: a pole with a numerator zero closer than
+  `doublet_tol * max(1, |pole|)` is discarded as spurious
 
 # Returns
 NamedTuple with:
 - `dmin::Float64`: Minimum distance `min |pole - 1|` over all analyzed buses/poles
 - `pole::ComplexF64`: Pole that attains `dmin`
-- `bus::Int`: Bus index where that pole was found
-- `L::Int`, `M::Int`: Degrees used for Padé [L/M]
+- `bus::Int`: Bus index where that pole was found (0 if no pole was found)
+- `L::Int`, `M::Int`: Padé degrees used at that bus
+- `radius::Float64`: root-test estimate of the radius of convergence of the series
+- `level::String`: `"RED"` if `radius < 1` (the series does not converge at `s = 1`),
+  otherwise `st_level(dmin)`
 - `critical::Vector{NamedTuple}`: Critical poles sorted by ascending distance:
   each entry is `(bus::Int, pole::ComplexF64, distance::Float64)`
 
 # Definition
-For each non-slack bus `i`, form a Padé approximant of:
-```
-V_i(s) = Σ_{n=0}^{order} V_i^(n) s^n
-```
-using:
-- `M = order ÷ 2`
-- `L = order - M`
+For each non-slack bus `i` the series `V_i(s) = Σ V_i^(n) s^n` is cut where its
+coefficients reach rounding level (`rtol`), at order `N_i ≤ order`, and a Padé
+`[L/M]` approximant with `M = N_i ÷ 2`, `L = N_i - M` is formed. Its poles,
+except spurious ones (pole-zero doublets, `doublet_tol`), give
 
-Then compute:
 ```
 dmin = min_{i,k} |p_{i,k} - 1|
 ```
-where `p_{i,k}` are the Padé denominator roots (poles).
+
+The radius is the root test on the largest coefficient per order over the last
+four orders: `radius = min_k (max_i |V_i^(k)|)^(-1/k)` (`Inf` if they vanish).
 
 # Interpretation (Important)
-- This is a *heuristic analytic-continuation margin* based on Padé poles.
-- A smaller `dmin` can indicate that the Padé approximation has a pole closer to the
-  physical evaluation point `s = 1`, which may correlate with reduced continuation margin.
+- This is a *heuristic analytic-continuation margin*. A pole close to `s = 1`
+  or a radius close to 1 indicates a load flow close to its limit.
+- Without the cut, a series whose coefficients decayed to rounding level
+  produces spurious poles near `s = 1` on easy cases.
 - It is **not** a rigorous voltage-stability proof and should not be equated with
   eigenvalue-based small-signal stability or classic V–Q/PV margin certificates.
-- Spurious poles may occur; compare multiple [L/M] choices or orders if you rely on it.
 
 # Notes
 - `max_buses` is purely a speed knob; it may miss the globally closest pole.
@@ -789,6 +808,7 @@ where `p_{i,k}` are the Padé denominator roots (poles).
 # See Also
 - `pade_poles`
 - `pade_build`
+- `st_level`
 """
 function stability_from_Vcoeff(
    Vcoeff::Matrix{ComplexF64};
@@ -796,11 +816,9 @@ function stability_from_Vcoeff(
    order::Int = size(Vcoeff, 2) - 1,
    max_buses::Int = 0,
    critical_poles::Union{Symbol,Int} = :auto,
+   rtol::Float64 = 1e-13,
+   doublet_tol::Float64 = 1e-3,
 )
-   Nv = order
-   Mv = Nv ÷ 2
-   Lv = Nv - Mv
-
    nbus = size(Vcoeff, 1)
    buses = [i for i = 1:nbus if i != slack]
    if max_buses > 0 && length(buses) > max_buses
@@ -810,36 +828,65 @@ function stability_from_Vcoeff(
    best_d = Inf
    best_p = 0.0 + 0.0im
    best_bus = 0
+   best_L = order - order ÷ 2
+   best_M = order ÷ 2
    candidates = NamedTuple{(:bus, :pole, :distance),Tuple{Int,ComplexF64,Float64}}[]
 
    @inbounds for i in buses
-      cV = @view Vcoeff[i, :]  # V^(0..order), no alloc
-      poles = pade_poles(cV, Lv, Mv)
+      c = Vcoeff[i, 1:(order+1)]
+      scale = maximum(abs, c)
+      N = order
+      while N > 2 && abs(c[N+1]) <= rtol * scale
+         N -= 1
+      end
+      Mv = N ÷ 2
+      Lv = N - Mv
+      Mv >= 1 || continue
+      # an exactly rational series of lower degree makes the Padé system singular
+      a, b = try
+         pade_build(c[1:(N+1)], Lv, Mv)
+      catch err
+         _is_recoverable_linear_solve_error(err) || rethrow()
+         continue
+      end
+      poles = _roots_trimmed(b)
+      zeros_ = _roots_trimmed(a)
       for p in poles
+         any(z -> abs(z - p) < doublet_tol * max(1.0, abs(p)), zeros_) && continue
          d = abs(p - (1.0 + 0.0im))
          push!(candidates, (bus = i, pole = p, distance = d))
          if d < best_d
             best_d = d
             best_p = p
             best_bus = i
+            best_L = Lv
+            best_M = Mv
          end
       end
    end
 
+   # Root test on the largest coefficient per order, last four orders
+   radius = Inf
+   for k = max(1, order - 3):order
+      ck = maximum((abs(Vcoeff[i, k+1]) for i in buses); init = 0.0)
+      ck > 0.0 && (radius = min(radius, ck^(-1 / k)))
+   end
+
    if critical_poles === :auto
-      k = isempty(buses) ? 0 : ceil(Int, sqrt(length(buses)))
+      kc = isempty(buses) ? 0 : ceil(Int, sqrt(length(buses)))
    elseif critical_poles isa Int
       critical_poles >= 0 || throw(ArgumentError("critical_poles must be :auto or a non-negative Int."))
-      k = critical_poles
+      kc = critical_poles
    else
       throw(ArgumentError("critical_poles must be :auto or a non-negative Int."))
    end
 
    sort!(candidates, by = x -> x.distance)
-   k = min(k, length(candidates))
-   critical = candidates[1:k]
+   kc = min(kc, length(candidates))
+   critical = candidates[1:kc]
 
-   return (dmin = best_d, pole = best_p, bus = best_bus, L = Lv, M = Mv, critical = critical)
+   level = radius < 1.0 ? "RED" : st_level(best_d)
+   return (dmin = best_d, pole = best_p, bus = best_bus, L = best_L, M = best_M, radius = radius, level = level, critical = critical)
 end
 
 function _handle_deprecated_apslf_germ_kwargs(kwargs; context::AbstractString, strict::Bool = true)

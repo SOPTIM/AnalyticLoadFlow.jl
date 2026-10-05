@@ -124,10 +124,15 @@ safe_get(x, sym::Symbol, default = nothing) = (x !== nothing && sym in propertyn
 
 """
     st_level(dmin::Float64)
+    st_level(st::NamedTuple)
 
-Convert stability distance to color-coded level (GRN/YEL/RED/NA).
+Convert a pole distance to a color-coded level: RED below 0.1, YEL below 0.3,
+GRN above (NA for NaN). For the result of [`stability_from_Vcoeff`](@ref) the
+level also takes the radius into account (RED when the series does not
+converge at `s = 1`); prefer this form.
 """
 st_level(dmin::Float64) = isnan(dmin) ? "NA" : dmin < 0.10 ? "RED" : dmin < 0.30 ? "YEL" : "GRN"
+st_level(st::NamedTuple) = st.level   # the result of stability_from_Vcoeff (pole distance and radius)
 
 
 """

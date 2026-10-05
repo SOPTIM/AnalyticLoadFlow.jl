@@ -151,16 +151,17 @@ dV = abs.(res.V .- case.V_ref)
 # converges. This is why `:deviation` is the default and the supported germ;
 # `:noload` is experimental.
 #
-# The coefficients show it directly. The root test $|V^{(k)}|^{-1/k}$ over the
-# last orders estimates the radius of convergence: above 1 the series
-# converges at $s = 1$, below 1 it does not.
+# The coefficients show it directly. `stability_from_Vcoeff` estimates the
+# radius of convergence by the root test $|V^{(k)}|^{-1/k}$ over the last
+# orders (above 1 the series converges at $s = 1$, below 1 it does not) and
+# rates the case RED when it is below 1.
 
 for germ in (:deviation, :noload)
    V, _, Vc, _, _ = A.apslf_pf_pv_direct(case.Y, case.bustype, case.Pspec, case.Qspec, case.Vm; slack = case.slack, Vslack = ComplexF64(case.Vm[case.slack], 0), order = 40, self_check = false, germ = germ)
-   radius = minimum(maximum(abs.(Vc[:, k+1]))^(-1 / k) for k = 37:40)
-   @printf("germ = %-10s |V^(0)| max = %.2f   |V^(10)| max = %.1e   |V^(40)| max = %.1e   radius ≈ %.3f\n",
-      germ, maximum(abs.(Vc[:, 1])), maximum(abs.(Vc[:, 11])), maximum(abs.(Vc[:, 41])), radius)
-   @assert (germ == :deviation) == (radius > 1)   #src
+   st = A.stability_from_Vcoeff(Vc; slack = case.slack, order = 40)
+   @printf("germ = %-10s |V^(0)| max = %.2f   |V^(10)| max = %.1e   |V^(40)| max = %.1e   radius ≈ %.3f   %s\n",
+      germ, maximum(abs.(Vc[:, 1])), maximum(abs.(Vc[:, 11])), maximum(abs.(Vc[:, 41])), st.radius, A.st_level(st))
+   @assert (germ == :deviation) == (st.radius > 1) && (A.st_level(st) == "RED") == (germ == :noload)   #src
 end
 
 # ## 5. Reactive limits

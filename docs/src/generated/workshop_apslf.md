@@ -626,45 +626,38 @@ true voltage function, and the nearest singularity is where the load
 flow ceases to exist (the "nose" of the PV curve). Its distance to
 $s = 1$ is therefore a heuristic margin to collapse
 ([Section 5.3](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#53-properties-and-practical-use)).
-`stability_from_Vcoeff` computes it from the coefficient matrix and
-returns `dmin` (that distance) and the pole; `st_level` maps `dmin` to a
-traffic light: GRN above 0.3, YEL above 0.1, RED below.
+`stability_from_Vcoeff` computes it from the coefficient matrix. It
+returns `dmin` (that distance), the pole, and `radius`, the root-test
+estimate $\min_k |V^{(k)}|^{-1/k}$ of the convergence radius over the last
+orders (above 1: the series converges at $s = 1$). Before the Padé step
+each series is cut where its coefficients reach rounding level, and poles
+paired with a zero of the numerator (spurious pole-zero doublets) are
+dropped. `st_level(st)` turns the result into a traffic light: RED if the
+radius is below 1, otherwise by distance, GRN above 0.3, YEL above 0.1,
+RED below.
 
 The experiment: scale all injections by a factor and watch the nearest
-pole. The table also prints the pole itself and the root-test estimate of
-the convergence radius, $\min_k |V^{(k)}|^{-1/k}$ over the last orders
-(above 1: the series converges at $s = 1$). The solver evaluates with
-Padé, so a heavily loaded case that still has a solution is not lost to a
-slowly converging Taylor sum.
+pole.
 
 ````@example workshop_apslf
-println("load factor  converged   min |V|   nearest pole        distance  level   radius")
+println("load factor  converged   min |V|   nearest pole        distance  radius  level")
 for factor in (1.0, 1.5, 2.0, 2.5, 3.0)
    # same case, all injections scaled; reactive limits switched off so only the loading changes
    heavy = merge(case, (Pspec = factor .* case.Pspec, Qspec = factor .* case.Qspec, Qmin = fill(-1e9, 9), Qmax = fill(1e9, 9)))
    rh = solve_pf_apslf(heavy; order = 40, nr_polish = false, return_coeffs = true)
    st = A.stability_from_Vcoeff(rh.Vcoeff; slack = 1, order = 40)   # st.dmin = distance of the nearest pole to s = 1
-   radius = minimum(maximum(abs.(rh.Vcoeff[:, k+1]))^(-1 / k) for k = 30:40)
-   @printf("   × %.1f      %-9s   %.4f    %6.3f %+6.3fim    %.3f     %s     %.2f\n", factor, rh.converged, minimum(abs.(rh.V)),
-      real(st.pole), imag(st.pole), st.dmin, A.st_level(st.dmin), radius)
+   @printf("   × %.1f      %-9s   %.4f    %6.3f %+6.3fim    %.3f     %.2f    %s\n", factor, rh.converged, minimum(abs.(rh.V)),
+      real(st.pole), imag(st.pole), st.dmin, st.radius, A.st_level(st))
 end
 ````
 
-What the table shows:
-
-- From factor 1.5 on, the nearest pole sits on the real axis and moves
-  towards $s = 1$ as the loading grows; the radius estimate falls with it.
-  At factor 3 the pole is practically at $s = 1$, the radius is close to
-  1 and the load flow has no solution any more (a Newton solve from the
-  same point fails as well).
-- At factor 1 the indicator says YEL although this is the easiest case:
-  the nearest "pole" lies off the real axis. The coefficients have decayed
-  to rounding level long before order 40, and the Padé approximant of
-  such a series has spurious poles. The radius estimate, read from the
-  coefficients directly, does not have this problem.
+What the table shows: the nearest pole sits on the real axis and moves
+towards $s = 1$ as the loading grows, and the radius estimate falls with
+it. At factor 3 the pole is practically at $s = 1$ and the load flow has
+no solution any more (a Newton solve from the same point fails as well).
 
 The pole distance is a heuristic margin, not a certificate. Read it as a
-trend, together with `converged`, the mismatch and the radius estimate.
+trend, together with `converged` and the mismatch.
 
 ### 6. The germ on the 9-bus case
 

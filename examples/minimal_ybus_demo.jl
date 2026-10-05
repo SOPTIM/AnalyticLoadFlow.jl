@@ -120,7 +120,7 @@ function print_stability_summary(res; slack, order)
 
    st = AnalyticLoadFlow.stability_from_Vcoeff(Vcoeff; slack = slack, order = order, critical_poles = :auto)
    if isfinite(st.dmin)
-      lvl = AnalyticLoadFlow.st_level(st.dmin)
+      lvl = AnalyticLoadFlow.st_level(st)   # pole distance and radius
       @printf(
          "st_dmin = %.3e   st_lvl = %s   st_bus = %d   pole = %+.6f%+.6fi   [L/M]=[%d/%d]\n",
          st.dmin,

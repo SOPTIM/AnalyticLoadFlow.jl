@@ -7,6 +7,8 @@
 - The direct PV kernel is the default everywhere: `solve_pf_apslf_with_pv_q_limits` and `solve_demo_case` now default to `inner = :direct_pv` (`solve_pf_apslf` already used `mode = :direct`).
 - Supported: direct mode, Padé evaluation, `germ = :deviation`. The outer mode (`mode = :outer`, `inner = :pq`), the Taylor evaluation and the germs `:noload` and `:flat` are marked experimental in docstrings, docs and notebooks.
 
+- `stability_from_Vcoeff` cuts each series where its coefficients reach rounding level and drops spurious pole-zero doublets before taking the nearest pole; it also returns `radius` (root-test estimate of the convergence radius) and `level` (RED when `radius < 1`, else by pole distance). `st_level(st)` takes the whole result. Easy cases no longer show spurious poles near `s = 1` (9-bus case: YEL before, GRN now), and a divergent series is RED (PEGASE 2869 with `germ = :noload`: GRN before). An exactly rational series no longer throws.
+
 ### Fixed
 - Outer mode (`inner = :pq`, `mode = :outer` and the outer fallback of `mode = :direct`) reports `converged = true` only when the P/Q mismatch is below the tolerance, as in direct mode; before, a result with the flat germ was reported converged at a mismatch of 1.9 pu.
 - Workshop notebooks: the large-network notebook solves PEGASE 2869 with Padé (the Taylor sum stopped at 2e-8 pu and reported `converged = false`), shows the root-test radius instead of a pole distance that contradicted the text, and locates the residual of the stored state correctly; the main workshop's loading experiment uses Padé and no longer claims that factor 2 has no solution; "the solver uses Padé by default" corrected (`use_pade = true` selects it).
