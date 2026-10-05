@@ -43,10 +43,10 @@ The code is made available under the Apache-2.0 license. This does not imply any
 | Feature | Status | Notes |
 | --- | --- | --- |
 | PQ buses / PQ load flow | Supported | APSLF PQ core |
-| PV buses | Supported | outer-loop PV handling and direct PV kernel |
+| PV buses | Supported | direct PV kernel (default); outer-loop PV handling is experimental |
 | Q-limit handling | Supported, limited | PV→PQ switching when `Qmin`/`Qmax` are violated |
 | NR polish | Optional | rectangular Newton post-processing |
-| Padé evaluation | Supported | used for series evaluation / analytical continuation |
+| Padé evaluation | Supported | the solver always evaluates the series with Padé (analytic continuation) |
 | 400 V LV PQ-only example | Included | synthetic educational radial street-feeder case |
 | Parametric tiled-grid scaling example | Included | synthetic one-voltage-level sparse Y-bus, configurable with `--buses=N`, includes timing output |
 | External case import | Not included | no MATPOWER/CGMES import workflow |
@@ -121,11 +121,11 @@ julia --project=. examples/minimal_ybus_demo.jl --case=118 --inner=pq
 julia --project=. examples/minimal_ybus_demo.jl --case=all --inner=pq
 ```
 
-- `--case=9 --inner=pq` runs the small teaching case with outer-loop PV handling and shows limited Q-limit handling for PV buses via PV→PQ switching.
+- `--case=9 --inner=pq` runs the small teaching case with the experimental outer-loop PV handling and shows limited Q-limit handling for PV buses via PV→PQ switching.
 - `--case=lv400` runs the synthetic 400 V low-voltage radial street-feeder case; it is PQ-only and does not demonstrate Q-limit switching.
 - `--case=118` runs the synthetic 118-bus-sized integration case; it is generated data, not the official IEEE 118 benchmark.
 - `--case=all` runs the 9-bus, LV 400 V, and synthetic 118-bus cases.
-- `--inner=pq` uses the outer-loop PV logic with PQ inner solves.
+- `--inner=pq` uses the experimental outer-loop PV logic with PQ inner solves.
 
 The console examples are thin entry points: reusable demo data and solver helpers live in `src/demo_cases.jl`, while presentation and argument parsing stay in `examples/`. The examples print summaries for users and intentionally return `nothing` from `main`. They provide the same NamedTuple data contract: `Y`, `bustype`, `Pspec`, `Qspec`, `Vm`, `Qmin`, `Qmax`, and `slack`.
 

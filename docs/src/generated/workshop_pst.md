@@ -170,9 +170,10 @@ end
 ````
 
 The package does the same through the `germ` keyword. Its `:deviation`
-variant uses $Y_0 = Y - \mathrm{diag}(Y\mathbf{1})$, which has zero row sums
-for any $Y$ and makes the deviation a diagonal matrix; the result is the
-same solution.
+variant (the default and the supported one) uses
+$Y_0 = Y - \mathrm{diag}(Y\mathbf{1})$, which has zero row sums for any $Y$
+and makes the deviation a diagonal matrix; the result is the same
+solution. `:noload` (variant 2) is available as an experimental option.
 
 ````@example workshop_pst
 case4 = (Y = Y4, bustype = [:slack, :pq, :pq, :pq], Pspec = real.(S4), Qspec = imag.(S4), Vm = ones(4), Qmin = fill(-1e9, 4), Qmax = fill(1e9, 4), slack = 1)

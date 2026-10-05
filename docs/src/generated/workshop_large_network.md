@@ -114,9 +114,9 @@ comparison at the end of Section 3.
 `Y` is sparse, and so is the whole solver: no conversion is needed. The
 default embedding (`germ = :deviation`) keeps the flat germ and ramps bus
 shunts and transformer deviations up with $s$. The series is evaluated at
-$s = 1$ with Padé approximants (the default); no Newton polish is needed.
-(With `use_pade = false` the plain Taylor sum of 40 terms stops at a
-mismatch of about 2e-8 pu here, just above the 1e-8 tolerance.)
+$s = 1$ with Padé approximants; no Newton polish is needed. (The plain
+Taylor sum of the same 40 terms would stop at a mismatch of about 2e-8 pu
+here, just above the 1e-8 tolerance.)
 
 ````@example workshop_large_network
 res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
@@ -135,7 +135,8 @@ differently. The no-load state of PEGASE, with all loads switched off, is
 far from the operating point (Ferranti rise on long lightly loaded lines),
 so the `:noload` path has a singularity close to $s = 0$ and the series
 diverges at $s = 1$. The `:deviation` path starts at 1 pu everywhere and
-converges.
+converges. This is why `:deviation` is the default and the supported germ;
+`:noload` is experimental.
 
 The coefficients show it directly. The root test $|V^{(k)}|^{-1/k}$ over the
 last orders estimates the radius of convergence: above 1 the series

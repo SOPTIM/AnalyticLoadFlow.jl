@@ -3,7 +3,9 @@
 ## Unreleased
 
 ### Changed
-- `solve_pf_apslf` and `solve_pf_apslf_with_pv_q_limits` evaluate the series with Padé by default (`use_pade = true`, as the kernels already did); the plain Taylor sum stopped short of the tolerance on large networks and reported `converged = false` for solvable cases. `use_pade = false` still selects it.
+- `solve_pf_apslf` and `solve_pf_apslf_with_pv_q_limits` evaluate the series with Padé only; the plain Taylor sum stopped short of the tolerance on large networks and reported `converged = false` for solvable cases. `use_pade` is accepted without effect, and the `mode` of `evaluation_options` is set to `:pade`.
+- The direct PV kernel is the default everywhere: `solve_pf_apslf_with_pv_q_limits` and `solve_demo_case` now default to `inner = :direct_pv` (`solve_pf_apslf` already used `mode = :direct`).
+- Supported: direct mode, Padé evaluation, `germ = :deviation`. The outer mode (`mode = :outer`, `inner = :pq`), the Taylor evaluation and the germs `:noload` and `:flat` are marked experimental in docstrings, docs and notebooks.
 
 ### Fixed
 - Outer mode (`inner = :pq`, `mode = :outer` and the outer fallback of `mode = :direct`) reports `converged = true` only when the P/Q mismatch is below the tolerance, as in direct mode; before, a result with the flat germ was reported converged at a mismatch of 1.9 pu.

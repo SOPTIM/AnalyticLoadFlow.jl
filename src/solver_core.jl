@@ -862,9 +862,9 @@ end
 
 Return the APSLF germ `V^(0)` for the non-slack buses in the order of `nonslack`.
 
-- `germ = :flat`   → canonical flat germ `1∠0`. Exact at order 0 only if the
+- `germ = :flat`   (experimental) → canonical flat germ `1∠0`. Exact at order 0 only if the
   constant matrix has zero row sums (pure series network) and `Vslack = 1`.
-- `germ = :noload` → solution of the linear no-load problem
+- `germ = :noload` (experimental) → solution of the linear no-load problem
   `Y_red V^(0) = -Y[red, slack] Vslack`. This is the exact `s = 0` state for
   any `Y`: line shunts, off-nominal transformer ratios, phase shifters (PST)
   and `Vslack ≠ 1` are all absorbed into the germ, and the recursion runs
@@ -2539,13 +2539,18 @@ const _PVKernelResult = Tuple{Vector{ComplexF64},Vector{Float64},Matrix{ComplexF
 Outer-loop PV handling + Q-limits around an inner APSLF solver.
 
 Inner modes:
-- `inner = :pq`          # :pq | :direct_pv
+- `inner = :direct_pv` (default):
+  Use the direct PV kernel (`apslf_pf_pv_direct`) inside the Q-limit outer loop.
+  `:direct_pv_sparse` is accepted as the former name of the same kernel.
+- `inner = :pq`:
   Solve using PQ-only APSLF (`apslf_pq`) and enforce PV `|V|` by iteratively
   adjusting `Q` at PV buses (secant loop). Then enforce Q-limits (PV→PQ switching)
-  in an outer loop.
-- `inner = :direct_pv`:
-  Use the direct PV kernel (`apslf_pf_pv_direct`) inside the same Q-limit outer loop.
-  `:direct_pv_sparse` is accepted as the former name of the same kernel.
+  in an outer loop. Slower and less accurate than the direct kernel; kept as a
+  fallback.
+
+Evaluation: the series are always evaluated at `s = 1` with Padé approximants.
+`use_pade` is accepted for existing calls and has no effect; `evaluation_options`
+keeps its settings but its `mode` is set to `:pade`.
 
 Matrices: `Y` (and `nr_polish_Y`) may be dense or sparse; they are converted to
 `SparseMatrixCSC` once, the solver itself is sparse only. `use_sparse` and
@@ -2571,10 +2576,10 @@ Convergence summary:
   and no switching occurs.
 
 APSLF germ semantics (`germ` keyword):
-- `germ = :flat` (legacy): canonical analytic germ `V(s=0)=1∠0`. Exact at
+- `germ = :flat` (legacy, experimental): canonical analytic germ `V(s=0)=1∠0`. Exact at
   order 0 only for a pure series network with `Vslack = 1`; with line shunts,
   transformer taps or phase shifters the result needs the NR polish.
-- `germ = :noload`: the germ is the linear no-load solution of the
+- `germ = :noload` (experimental): the germ is the linear no-load solution of the
   full Y-bus (theory Section 6.5, variant 2). Exact at order 0 for shunts,
   off-nominal ratios, phase-shifting transformers and `Vslack ≠ 1`; the pure
   APSLF result is then a load-flow solution without NR polish.
@@ -2603,8 +2608,10 @@ function solve_pf_apslf_with_pv_q_limits(
    Vm::Vector{Float64},
    Qmin::Vector{Float64},
    Qmax::Vector{Float64};
-   inner::Symbol = :pq,
+   inner::Symbol = :direct_pv,
    nr_polish_Y::Union{Nothing,AbstractMatrix{ComplexF64}} = nothing,
+   evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
+   use_pade::Bool = true,                    # no effect: the interface evaluates with Padé only
    use_sparse::Union{Bool,Symbol} = :auto,   # no effect since 0.10.0 (sparse only)
    sparse_nbus_min::Int = 110,               # no effect since 0.10.0 (sparse only)
    kwargs...,
@@ -2624,9 +2631,16 @@ function solve_pf_apslf_with_pv_q_limits(
       Qmax;
       inner = inner === :direct_pv_sparse ? :direct_pv : inner,
       nr_polish_Y = Ynr,
+      use_pade = true,
+      evaluation_options = _pade_only(evaluation_options),
       kwargs...,
    )
 end
+
+# The interface evaluates with Padé only: evaluation options keep their
+# thresholds and fallback settings, the mode is fixed to :pade.
+_pade_only(::Nothing) = nothing
+_pade_only(o::APSLFEvaluationOptions) = o.mode === :pade ? o : APSLFEvaluationOptions(:pade, o.auto, o.pade)
 
 # One line per outer iteration at verbose >= 2.
 function _print_outer_iteration(outer::Int, inner::Symbol, switched::Bool, npv_now::Int, npq_now::Int, max_v_err::Float64, maxP::Float64, maxQpq::Float64)
@@ -2673,7 +2687,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    use_pade::Bool = true,
    germ::Symbol = :deviation,    # :deviation | :noload | :flat
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
-   inner::Symbol = :pq,          # :pq | :direct_pv
+   inner::Symbol = :direct_pv,   # :direct_pv | :pq
    max_outer::Int = 30,
    max_pv_iter::Int = 12,
    vtol::Float64 = 1e-6,
@@ -3427,8 +3441,9 @@ Unified public entrypoint for APSLF (Holomorphic Embedding Load Flow) power flow
 
 # Keyword Arguments
 - `mode::Symbol = :direct`: Solution method
-  - `:direct` → Uses direct PV formulation (`apslf_pf_pv_direct`)
-  - `:outer` → Uses PQ-only APSLF with outer PV loop (`apslf_pq` + secant)
+  - `:direct` (default, supported) → direct PV formulation (`apslf_pf_pv_direct`)
+  - `:outer` (experimental) → PQ-only APSLF with outer PV loop (`apslf_pq` + secant)
+- The series are always evaluated with Padé approximants (`use_pade` has no effect).
 - Additional kwargs passed to `solve_pf_apslf_with_pv_q_limits`
 
 # Returns
