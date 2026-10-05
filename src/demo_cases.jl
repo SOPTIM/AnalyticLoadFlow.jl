@@ -110,7 +110,7 @@ function solve_demo_case(
    kwargs...,
 )
    return solve_pf_apslf_with_pv_q_limits(
-      Matrix{ComplexF64}(case.Y),
+      SparseMatrixCSC{ComplexF64,Int}(case.Y),
       case.bustype,
       case.Pspec,
       case.Qspec,

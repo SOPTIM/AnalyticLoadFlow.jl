@@ -1,5 +1,19 @@
 # Changelog
 
+## Version 0.10.0
+
+### Added
+- Transformer branches with ratio and phase shift (PST): `pi_branch`, `transformer_branch`, `build_ybus` (dense or sparse), `branch_flows`, `branch_active_power`, `print_branch_flows`, the 9-bus PST case `demo_case_9bus_pst` and `solve_pf_pst_regulated`, an outer secant loop on the angle of a regulated phase shifter (theory Section 6.5). A fixed shift is exact with the default `germ = :deviation`.
+- MATPOWER case reader (`parse_matpower_m`, `matpower_case`) that detects the angle unit, the angle sign and the ratio convention from the stored solution; PEGASE 2869 example.
+- Notebooks "Transformers and PST" and "Large network (PEGASE)".
+
+### Changed
+- The solver is sparse only. `Y` may still be passed dense or sparse; it is converted to `SparseMatrixCSC` once on entry. The dense direct PV kernel, the dense Jacobian and the dense-direct retry in `solve_pf_apslf` are removed. Existing calls keep working: `apslf_pf_pv_direct_sparse` and `inner = :direct_pv_sparse` are the same kernel as `apslf_pf_pv_direct` and `:direct_pv`; `use_sparse`, `sparse_nbus_min` and `dense_fallback_nbus_max` are accepted without effect.
+- Precompile and first call are much shorter: the solver compiles only the path a solve takes (inner kernel, germ variant, debug and report output) instead of every branch, and the Padé and Newton steps call `lu` instead of the `\` polyalgorithm. Results are unchanged on the test and benchmark cases.
+
+### Fixed
+- After a non-finite PQ inner solve, a successful direct-PV fallback is now used; before, its result was discarded and the original error raised.
+
 ## Version 0.9.16
 
 ### Changed

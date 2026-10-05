@@ -11,19 +11,23 @@ Julia package implementing the Analytic Power Series Load Flow:
 
 - Sparse Y-Bus interface
 - PQ, PV and Slack buses
+- Transformers with ratio and phase shift (PST), regulated PST outer loop
 - Padé evaluation
 - Optional Newton-Raphson polish
+- MATPOWER case import (PEGASE-sized networks)
 - Open-source reference implementation
 
-## Workshop notebook (runs in the browser)
+## Workshop notebooks (run in the browser)
 
-No installation required, the workshop notebook runs on Google Colab:
+No installation required, the workshop notebooks run on Google Colab:
 
 | Notebook | Open |
 |---|---|
 | **APSLF workshop**: the hand calculations of theory Section 7 (two-bus, four-bus) against the solver digit by digit, then the 9-bus case: series and Padé, germ variants, PV buses and Q limits, sparse path | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_apslf.ipynb) |
+| **Transformers and PST**: branch model, the two embeddings of theory Section 6.5 by hand, angle sweep, regulated PST | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_pst.ipynb) |
+| **Large network**: PEGASE 2869 from a MATPOWER file, convention detection, timing, diagnostics | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/SOPTIM/AnalyticLoadFlow.jl/blob/main/notebooks/workshop_large_network.ipynb) |
 
-See `notebooks/README.md`; the notebook is generated from the Literate source in `docs/lit/`.
+See `notebooks/README.md`; the notebooks are generated from the Literate sources in `docs/lit/`.
 
 
 ## Project Status
@@ -81,7 +85,7 @@ using AnalyticLoadFlow
 
 From a local checkout, run commands with `julia --project=.` from the repository root.
 
-The environment variable `ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD` selects how much of the solver is compiled into the package image at install time: `core` (default) the default `solve_pf_apslf` call, `full` every solver path of the documentation and the workshop notebook (for sysimage builds), `off` nothing. It is read when the package precompiles, so set it before `Pkg.add` or `Pkg.precompile()`.
+The environment variable `ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD` selects how much of the solver is compiled into the package image at install time: `core` (default) the default `solve_pf_apslf` call, `full` every solver path of the documentation and the workshop notebooks (for sysimage builds), `off` nothing. It is read when the package precompiles, so set it before `Pkg.add` or `Pkg.precompile()`.
 
 ## Run the example
 

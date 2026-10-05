@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.13.0"
+julia_version = "1.13.1"
 manifest_format = "2.1"
-project_hash = "1126a3856ddb9786d7ef165e50e343d906d51fdc"
+project_hash = "403e6b7e665f5facdd32b8f29eb2d531c1949612"
 
 [[deps.ANSIColoredPrinters]]
 git-tree-sha1 = "574baf8110975760d391c710b6341da1afa48d8c"
@@ -17,10 +17,10 @@ uuid = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 version = "0.4.5"
 
 [[deps.AnalyticLoadFlow]]
-deps = ["LinearAlgebra", "Logging", "Printf", "SparseArrays"]
+deps = ["LinearAlgebra", "Logging", "PrecompileTools", "Printf", "SparseArrays"]
 path = ".."
 uuid = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
-version = "0.9.15"
+version = "0.10.0"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -180,7 +180,7 @@ version = "1.9.1+0"
 [[deps.LibSSH2_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl", "OpenSSL_jll", "Zlib_jll"]
 uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
-version = "1.11.103+0"
+version = "1.11.104+0"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"

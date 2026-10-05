@@ -67,7 +67,11 @@ pages = [
    "Theory" => "theorie-eng.md",
    "API" => "api.md",
    "Example" => "minimal_ybus_demo.md",
-   "Workshop notebook" => "generated/workshop_apslf.md",
+   "Notebooks" => [
+      "APSLF workshop" => "generated/workshop_apslf.md",
+      "Transformers and PST" => "generated/workshop_pst.md",
+      "Large network (PEGASE)" => "generated/workshop_large_network.md",
+   ],
    "Changelog" => "CHANGELOG.md",
 ]
 

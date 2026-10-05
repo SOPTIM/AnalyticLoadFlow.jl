@@ -4,7 +4,7 @@
 #          how much of the solver is compiled into the package image at
 #          install time: "off" nothing, "core" (default) the one call every
 #          session makes, "full" every solver path the documentation and the
-#          workshop notebook use (for sysimage builds).
+#          workshop notebooks use (for sysimage builds).
 #
 # Copyright 2026 SOPTIM AG
 #
@@ -36,7 +36,7 @@ function _precompile_core()
    return nothing
 end
 
-# "full": every solver path the documentation and the workshop notebook use.
+# "full": every solver path the documentation and the workshop notebooks use.
 function _precompile_full()
    # Two-bus network with a capacitor bank (theory Section 7.10)
    y = 1.0 - 4.0im
@@ -52,7 +52,7 @@ function _precompile_full()
    Vm4 = [1.0, 1.0, 0.9, 1.0]
 
    with_logger(NullLogger()) do
-      # PQ-only kernel, dense, all three germs, Taylor and Padé
+      # PQ-only kernel (dense input, converted to sparse), all three germs, Taylor and Padé
       for germ in (:deviation, :noload, :flat)
          apslf_pq(Y2, S2; slack = 1, order = 8, use_pade = true, germ = germ)
       end
@@ -62,9 +62,8 @@ function _precompile_full()
       V4, Vc4, _ = apslf_pq(Y4, S4; slack = 1, order = 12, use_pade = true)
       calc_injections(Y4, V4)
 
-      # Direct PV kernels, dense and sparse
+      # Direct PV kernel
       apslf_pf_pv_direct(Y4, bt4, real.(S4), imag.(S4), Vm4; slack = 1, order = 12, self_check = false)
-      apslf_pf_pv_direct_sparse(Y4, bt4, real.(S4), imag.(S4), Vm4; slack = 1, order = 12, self_check = false)
 
       # High-level entry point on the 9-bus case: both PV modes, germs,
       # limits on and off, Newton polish, coefficient return
@@ -83,10 +82,15 @@ function _precompile_full()
       st = stability_from_Vcoeff(rc.Vcoeff; slack = 1, order = 12)
       st_level(st.dmin)
 
-      # Sparse path with the sparse direct PV kernel
+      # A case whose Y is already sparse
       sparse_case = merge(case, (Y = sparse(case.Y),))
       solve_pf_apslf(sparse_case; order = 12, nr_polish = false)
-      solve_pf_apslf(sparse_case; mode = :outer, order = 12, nr_polish = false, max_outer = 3)
+
+      # Phase-shifting transformer: fixed shift, branch flows, regulated PST
+      pst = demo_case_9bus_pst(shift_deg = 5.0, enforce_q_limits = false)
+      rp = solve_pf_apslf(pst; order = 12, nr_polish = false)
+      branch_flows(rp.V, pst.branches)
+      solve_pf_pst_regulated(φ -> demo_case_9bus_pst(shift_deg = φ, enforce_q_limits = false), 4, 5, 0.3; order = 12, nr_polish = false, max_iter = 3)
    end
    return nothing
 end

@@ -75,6 +75,13 @@ end
 
 _maybe_check_timeout(timeout_check, where::Symbol) = timeout_check === nothing ? nothing : timeout_check(where)
 
+# Inference barrier for paths chosen by a run-time value (inner kernel, germ
+# variant, nr_polish_Y given or not, debug and report output). The compiler cannot see
+# through `_kernel(f)(args...)`, so it compiles `f` only when a call actually
+# takes that path instead of compiling every branch up front. This keeps the
+# first call and the precompile workload short.
+_kernel(f) = Base.inferencebarrier(f)
+
 # -----------------------------------------------------------------------------
 # Bus type normalization helpers (case-insensitive handling of :pv/:PV etc.)
 # -----------------------------------------------------------------------------
@@ -87,39 +94,30 @@ _maybe_check_timeout(timeout_check, where::Symbol) = timeout_check === nothing ?
 end
 
 # -----------------------------------------------------------------------------
-# Sparse policy helpers
+# Sparse matrix handling
 # -----------------------------------------------------------------------------
 
-"""
-    maybe_sparse_Y(Y; nbus=size(Y,1), use_sparse=:auto, sparse_nbus_min=110)
+const SparseY = SparseMatrixCSC{ComplexF64,Int}
 
-Return either `Y` (as-is) or `sparse(Y)` depending on policy.
-
-- use_sparse = :auto  => use sparse when nbus >= sparse_nbus_min
-- use_sparse = true   => always convert dense -> sparse
-- use_sparse = false  => never convert (but if Y already sparse, keep it sparse)
 """
-function maybe_sparse_Y(
-   Y::AbstractMatrix{ComplexF64};
-   nbus::Int = size(Y, 1),
-   use_sparse::Union{Bool,Symbol} = :auto,
-   sparse_nbus_min::Int = 110,
-)
+    sparse_Y(Y) -> SparseMatrixCSC{ComplexF64,Int}
+
+The solver works on sparse matrices only. The entry points accept any
+`AbstractMatrix{ComplexF64}` and convert it here once; a
+`SparseMatrixCSC{ComplexF64,Int}` is returned as it is.
+"""
+sparse_Y(Y::SparseY) = Y
+sparse_Y(Y::AbstractMatrix{ComplexF64}) = SparseY(Y)
+
+"""
+    maybe_sparse_Y(Y; nbus, use_sparse, sparse_nbus_min) -> SparseMatrixCSC{ComplexF64,Int}
+
+Kept for existing calls: returns [`sparse_Y`](@ref)`(Y)`. Since 0.10.0 the
+solver is sparse only, the keywords have no effect.
+"""
+function maybe_sparse_Y(Y::AbstractMatrix{ComplexF64}; _ignored...)
    @assert size(Y, 1) == size(Y, 2)
-   @assert use_sparse === :auto || use_sparse === true || use_sparse === false
-
-   if use_sparse === false
-      return Y
-   elseif use_sparse === true
-      return issparse(Y) ? Y : sparse(Y)
-   else
-      # :auto
-      if nbus >= sparse_nbus_min
-         return issparse(Y) ? Y : sparse(Y)
-      else
-         return Y
-      end
-   end
+   return sparse_Y(Y)
 end
 
 """
@@ -134,10 +132,7 @@ Definitions:
 Per-bus form:
 `S_i = V_i * conj( Σ_k Y_{ik} V_k )`
 """
-function calc_injections(Y::AbstractMatrix{ComplexF64}, V::Vector{ComplexF64})
-   I = Y * V
-   return V .* conj.(I)
-end
+calc_injections(Y::AbstractMatrix{ComplexF64}, V::Vector{ComplexF64}) = calc_injections!(similar(V), similar(V), Y, V)
 
 """
     calc_injections!(Sinj, I, Y, V) -> Sinj
@@ -491,7 +486,10 @@ function pade_eval(c::AbstractVector{ComplexF64}, L::Int, M::Int; s::ComplexF64 
    _assert_finite_mat(A, "Padé matrix A")
    _assert_finite_vec(rhs, "Padé rhs b")
 
-   b = A \ rhs  # b1..bM
+   # lu instead of `\`: the polyalgorithm behind `\` (triangular, Hermitian,
+   # Cholesky, Bunch-Kaufman, LU) would be compiled in full for this one solve.
+   # A singular A throws SingularException either way.
+   b = lu(A) \ rhs  # b1..bM
    _assert_finite_vec(b, "Padé denominator q")
 
    # Numerator coefficients a_0..a_L:
@@ -609,7 +607,7 @@ function pade_build(c::AbstractVector{ComplexF64}, L::Int, M::Int)
       end
    end
 
-   b1 = A \ rhs  # b1..bM
+   b1 = lu(A) \ rhs  # b1..bM (lu, not `\`: see pade_eval)
 
    a = zeros(ComplexF64, L + 1)
    for n = 0:L
@@ -896,8 +894,12 @@ function apslf_germ(
    n = length(nonslack)
    germ == :flat && return fill(1.0 + 0.0im, n)
    germ == :deviation && return fill(Vslack, n)
+   return _kernel(_apslf_noload_germ_from_Y)(Y, nonslack, slack, Vslack, F)::Vector{ComplexF64}
+end
+
+function _apslf_noload_germ_from_Y(Y::AbstractMatrix{ComplexF64}, nonslack::Vector{Int}, slack::Int, Vslack::ComplexF64, F)
    Yslack = Vector{ComplexF64}(Y[nonslack, slack])
-   return apslf_noload_germ(F === nothing ? lu(issparse(Y) ? sparse(Y[nonslack, nonslack]) : Matrix(Y[nonslack, nonslack])) : F, Yslack, Vslack)
+   return apslf_noload_germ(F === nothing ? lu(sparse_Y(Y)[nonslack, nonslack]) : F, Yslack, Vslack)
 end
 
 """
@@ -906,7 +908,17 @@ end
 Row sums `Y·1` of the bus admittance matrix; the diagonal deviation of the
 `:deviation` embedding (see [`apslf_germ`](@ref)).
 """
-apslf_row_sums(Y::AbstractMatrix{ComplexF64}) = Vector{ComplexF64}(vec(sum(Y, dims = 2)))
+function apslf_row_sums(Y::SparseY)
+   d = zeros(ComplexF64, size(Y, 1))
+   rv = rowvals(Y)
+   nz = nonzeros(Y)
+   @inbounds for j = 1:size(Y, 2), p in nzrange(Y, j)
+      d[rv[p]] += nz[p]
+   end
+   return d
+end
+
+apslf_row_sums(Y::AbstractMatrix{ComplexF64}) = apslf_row_sums(sparse_Y(Y))
 
 """
     apslf_noload_germ(F, Yslack, Vslack) -> Vector{ComplexF64}
@@ -1015,7 +1027,7 @@ Evaluation at `s=1`:
 - by Padé `[L/M]` approximation of the voltage series coefficients.
 """
 function apslf_pq(
-   Y::AbstractMatrix{ComplexF64},
+   Y::SparseY,
    S::Vector{ComplexF64};
    slack::Int = 1,
    Vslack::ComplexF64 = 1.0 + 0.0im,
@@ -1034,10 +1046,14 @@ function apslf_pq(
 
    pq = [i for i = 1:nbus if i != slack]
    npq = length(pq)
+   if npq == 0   # slack only: nothing to solve (UMFPACK rejects a 0×0 matrix)
+      V = zeros(ComplexF64, nbus)
+      V[slack] = Vslack
+      return V, zeros(ComplexF64, 0, order + 1), zeros(ComplexF64, 0, order + 1)
+   end
 
-   # Reduced linear system for coefficient solves:
-   # If Y is sparse, keep the reduced matrix sparse (UMFPACK LU)
-   Yred = issparse(Y) ? sparse(Y[pq, pq]) : Matrix(Y[pq, pq])
+   # Reduced linear system for coefficient solves (sparse, UMFPACK LU)
+   Yred = Y[pq, pq]
    # :deviation embedding: constant matrix Y0 = Y - diag(Y·1), deviation d = Y·1 on the RHS
    drow = germ == :deviation ? apslf_row_sums(Y)[pq] : ComplexF64[]
    germ == :deviation && (Yred = Yred - Diagonal(drow))
@@ -1091,6 +1107,8 @@ function apslf_pq(
    return V, Vcoeff, Wcoeff
 end
 
+apslf_pq(Y::AbstractMatrix{ComplexF64}, S::Vector{ComplexF64}; kwargs...) = apslf_pq(sparse_Y(Y), S; kwargs...)
+
 
 # =============================================================================
 # APSLF PQ workspace (LU reuse)
@@ -1101,7 +1119,7 @@ end
 Pre-allocated workspace for efficient repeated APSLF PQ-only power flow solutions.
 
 # Type Parameters
-- `TY <: AbstractMatrix{ComplexF64}`: Type of reduced admittance matrix (sparse or dense)
+- `TY <: AbstractMatrix{ComplexF64}`: Type of reduced admittance matrix (sparse since 0.10.0)
 - `TF <: LinearAlgebra.Factorization`: Type of LU factorization of reduced system
 
 # Fields
@@ -1218,11 +1236,8 @@ Construct a pre-allocated workspace for efficient repeated APSLF PQ-only power f
 # Keyword Arguments
 - `slack::Int = 1`: Slack bus index (fixed voltage reference, excluded from unknowns)
 - `order::Int = 24`: APSLF series expansion order for voltage coefficients
-- `use_sparse::Union{Bool,Symbol} = :auto`: Sparsity policy for reduced admittance matrix
-  - `:auto` → Use sparse format when `nbus >= sparse_nbus_min`
-  - `true` → Always convert to sparse format
-  - `false` → Keep original matrix format (dense or sparse)
-- `sparse_nbus_min::Int = 110`: Threshold for automatic sparse conversion
+- `use_sparse`, `sparse_nbus_min`: accepted for existing calls, no effect since 0.10.0
+  (the reduced matrix is always sparse)
 
 # Returns
 - `APSLFPQWorkspace{TY,TF}`: Pre-allocated workspace with concrete types for efficiency
@@ -1258,10 +1273,8 @@ Y_red * V^(n) = conj(S_red) .* conj(W^(n-1))    for n = 1, 2, ..., order
 
 where the inverse series follows: `W^(n) = -(1/V^(0)) * Σ_{m=1}^n V^(m) W^(n-m)`
 
-# Sparsity Policy
-- **Automatic detection**: Uses system size to determine optimal matrix format
-- **Performance tuning**: `sparse_nbus_min` threshold balances sparse overhead vs benefits
-- **Memory efficiency**: Sparse format reduces storage and improves solve times for large systems
+# Sparsity
+- `Y` is converted to `SparseMatrixCSC` once; the reduced matrix is factorized with UMFPACK
 
 # Performance Benefits
 - Can be significantly faster for parameter sweeps than repeatedly calling an allocating solver,
@@ -1293,12 +1306,12 @@ function build_apslf_pq_workspace(
    @assert order >= 1
    germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
 
-   Yuse = maybe_sparse_Y(Y; nbus = nbus, use_sparse = use_sparse, sparse_nbus_min = sparse_nbus_min)
+   Yuse = sparse_Y(Y)   # use_sparse and sparse_nbus_min have no effect since 0.10.0
 
    pq = [i for i = 1:nbus if i != slack]
    npq = length(pq)
 
-   Yred = issparse(Yuse) ? sparse(Yuse[pq, pq]) : Matrix(Yuse[pq, pq])
+   Yred = Yuse[pq, pq]
    drow = germ == :deviation ? apslf_row_sums(Yuse)[pq] : ComplexF64[]
    germ == :deviation && (Yred = Yred - Diagonal(drow))
    F = lu(Yred)
@@ -1828,7 +1841,6 @@ Exploits the sparsity pattern of Y matrix:
 - Requires Y to be `SparseMatrixCSC{ComplexF64}` for efficient sparse traversal
 - Uses `cache.I` as work array for current injections I = Y*V
 - Modifies cache.I in-place but preserves input arguments
-- For dense matrices, use `build_rect_jac_dense` instead
 
 # Performance
 Computational complexity scales with nnz(Y) rather than nbus², making it
@@ -1967,138 +1979,6 @@ function build_rect_jac_sparse(cache::NRRectCache, Y::SparseMatrixCSC{ComplexF64
 end
 
 """
-    build_rect_jac_dense(cache, Y, V, Vm) -> Matrix{Float64}
-
-Build dense analytic Jacobian matrix for rectangular Newton-Raphson power flow iterations.
-
-# Arguments
-- `cache::NRRectCache`: Pre-allocated cache containing system structure and work arrays
-- `Y::AbstractMatrix{ComplexF64}`: Nodal admittance matrix (nbus × nbus), any format
-- `V::Vector{ComplexF64}`: Current voltage phasor estimates (length nbus)
-- `Vm::Vector{Float64}`: Specified voltage magnitudes for PV buses (p.u., length nbus). Not used by the Jacobian itself (the derivative of |V_i| - Vm_i does not depend on Vm); kept for a uniform call signature with the residual functions.
-
-# Returns
-- `Matrix{Float64}`: Dense Jacobian matrix J of size [2×(nbus-1)] × [2×(nbus-1)]
-
-# Jacobian Structure
-The Jacobian relates mismatch vector F to rectangular voltage state vector x:
-- **State vector:** `x = [Vr₁, Vr₂, ..., Vrₙ₋₁, Vi₁, Vi₂, ..., Viₙ₋₁]`
-- **Mismatch vector:** `F = [ΔP₁, ΔQ₁/ΔV₁, ΔP₂, ΔQ₂/ΔV₂, ...]`
-
-# Derivative Formulations
-For complex power injection `Si = Vi * conj(Ii)` where `I = Y*V`:
-
-**Power derivatives (PQ buses):**
-- `∂Si/∂Vrⱼ = conj(I_i)*δᵢⱼ + Vi*conj(Yᵢⱼ)`
-- `∂Si/∂Viⱼ = j*(conj(I_i)*δᵢⱼ - V_i*conj(Yᵢⱼ))`
-
-**Voltage magnitude derivatives (PV buses):**
-- `∂|Vi|/∂Vri = Vri/|Vi|`  (local derivative only)
-- `∂|Vi|/∂Vii = Vii/|Vi|`  (local derivative only)
-
-where δᵢⱼ is the Kronecker delta.
-
-# Bus Type Handling
-- **PQ buses:** Both ΔP and ΔQ equations contribute to Jacobian
-- **PV buses:** ΔP equation uses power derivatives, ΔV equation uses magnitude derivatives
-- **Slack bus:** Excluded from both equations and state variables
-
-# Dense vs Sparse
-This function computes all possible derivatives regardless of Y sparsity:
-- Suitable for small to medium systems where Y is dense or nearly dense
-- For large sparse systems, use `build_rect_jac_sparse` for better performance
-- Automatically handles any Y matrix format (dense, sparse, structured)
-
-# Notes
-- Uses `cache.I` as work array for current injections I = Y*V
-- Modifies cache.I in-place but preserves input arguments
-- Computational complexity O(nbus²) regardless of Y sparsity
-- Returns standard dense Float64 matrix suitable for direct factorization
-
-# Performance
-For systems with nbus < ~200 or dense Y matrices, this may be faster than
-sparse methods due to reduced overhead. For large sparse systems, prefer
-`build_rect_jac_sparse`.
-
-# Example
-```julia
-cache = build_nr_rect_cache(bustype, slack)
-J = build_rect_jac_dense(cache, Y, V, Vm)  # Y can be any matrix type
-# J is now ready for Newton step: dx = -(J \\ F)
-```
-"""
-function build_rect_jac_dense(cache::NRRectCache, Y::AbstractMatrix{ComplexF64}, V::Vector{ComplexF64}, ::Vector{Float64})
-   n = cache.nbus
-   non_slack = cache.non_slack
-   pos_ns = cache.pos_ns
-   rowP = cache.rowP
-   pv = cache.pv_mask
-   pq = cache.pq_mask
-
-   # I = Y*V
-   mul!(cache.I, Y, V)
-
-   m = 2 * (n - 1)
-   nvar = 2 * (n - 1)
-   J = zeros(Float64, m, nvar)
-
-   # For each equation bus i (non-slack), for each variable bus j (non-slack)
-   @inbounds for j in non_slack
-      col_pos = pos_ns[j]
-      colVr = col_pos
-      colVi = (n - 1) + col_pos
-
-      for i in non_slack
-         rP = rowP[i]
-         r2 = rP + 1
-
-         Yij = Y[i, j]
-
-         dS_dVr = V[i] * conj(Yij)
-         dS_dVi = -im * (V[i] * conj(Yij))
-
-         if i == j
-            Ii = cache.I[i]
-            dS_dVr += conj(Ii)
-            dS_dVi += im * conj(Ii)
-         end
-
-         # ΔP row
-         J[rP, colVr] += real(dS_dVr)
-         J[rP, colVi] += real(dS_dVi)
-
-         # second row
-         if pq[i]
-            J[r2, colVr] += imag(dS_dVr)
-            J[r2, colVi] += imag(dS_dVi)
-         elseif pv[i]
-            # ΔV later
-         else
-            error("build_rect_jac_dense: unsupported bus type at bus $i")
-         end
-      end
-   end
-
-   # PV ΔV local derivative
-   @inbounds for i in non_slack
-      pv[i] || continue
-      rV = rowP[i] + 1
-      pos = pos_ns[i]
-      pos == 0 && continue
-
-      vmi = abs(V[i])
-      vmi == 0.0 && continue
-      dVr = real(V[i]) / vmi
-      dVi = imag(V[i]) / vmi
-
-      J[rV, pos] = dVr
-      J[rV, (n-1)+pos] = dVi
-   end
-
-   return J
-end
-
-"""
     nr_refine_step_rect!(cache, Y, V, Pspec, Qspec, Vm; Vslack, damping=1.0, use_sparse=true)
         -> (maxabs_dx, maxabs_F)
 
@@ -2115,7 +1995,7 @@ Perform one Newton-Raphson refinement step in rectangular coordinates with analy
 # Keyword Arguments
 - `Vslack::ComplexF64`: Fixed slack bus voltage (applied after update)
 - `damping::Float64 = 1.0`: Step damping factor ∈ (0,1] for convergence control
-- `use_sparse::Bool = true`: Use sparse Jacobian if Y is SparseMatrixCSC, else dense
+- `use_sparse`: accepted for existing calls, no effect since 0.10.0 (the Jacobian is always sparse)
 
 # Returns
 - `Tuple{Float64, Float64}`: Maximum absolute step size and residual magnitude
@@ -2124,8 +2004,8 @@ Perform one Newton-Raphson refinement step in rectangular coordinates with analy
 
 # Algorithm Steps
 1. **Mismatch computation**: Compute residual vector F using `mismatch_rectangular!`
-2. **Jacobian assembly**: Build analytic Jacobian J (sparse or dense based on Y type)
-3. **Linear solve**: Compute Newton step `dx = -(J \\ F)`
+2. **Jacobian assembly**: Build the sparse analytic Jacobian J
+3. **Linear solve**: Compute Newton step `dx = -(lu(J) \\ F)`
 4. **Voltage update**: Apply damped step to non-slack bus voltages in rectangular form
 5. **Slack enforcement**: Restore slack bus voltage to specified value
 
@@ -2145,9 +2025,7 @@ The returned values are typically used for convergence assessment:
 - **Slack bus**: Voltage held fixed (excluded from state vector and equations)
 
 # Performance Notes
-- Jacobian sparsity automatically detected from Y matrix type
-- For `SparseMatrixCSC{ComplexF64}` and `use_sparse=true`: uses efficient sparse algorithms
-- For dense matrices or `use_sparse=false`: uses dense linear algebra
+- A dense `Y` is converted to `SparseMatrixCSC` once per call; pass a sparse `Y` in loops
 - Cache reuse eliminates allocations for mismatch vector and work arrays
 
 # Example
@@ -2164,27 +2042,24 @@ end
 """
 function nr_refine_step_rect!(
    cache::NRRectCache,
-   Y::AbstractMatrix{ComplexF64},
+   Y::SparseY,
    V::Vector{ComplexF64},
    Pspec::Vector{Float64},
    Qspec::Vector{Float64},
    Vm::Vector{Float64};
    Vslack::ComplexF64,
    damping::Float64 = 1.0,
-   use_sparse::Bool = true,
+   use_sparse::Bool = true,   # no effect since 0.10.0
 )
    # Residual
    F = mismatch_rectangular!(cache, Y, V, Pspec, Qspec, Vm)
 
    # Jacobian
-   J = if use_sparse && (Y isa SparseMatrixCSC{ComplexF64})
-      build_rect_jac_sparse(cache, Y, V, Vm)
-   else
-      build_rect_jac_dense(cache, Y, V, Vm)
-   end
+   J = build_rect_jac_sparse(cache, Y, V, Vm)
 
-   # Solve J*dx = -F
-   cache.dx .= -(J \ F)
+   # Solve J*dx = -F. lu directly: for a sparse J the `\` polyalgorithm would
+   # also compile the CHOLMOD and SPQR paths, which a Jacobian never takes.
+   cache.dx .= -(lu(J) \ F)
 
    # Apply update to V (non-slack only)
    non_slack = cache.non_slack
@@ -2201,38 +2076,52 @@ function nr_refine_step_rect!(
    return (maximum(abs.(cache.dx)), maximum(abs.(F)))
 end
 
-
+nr_refine_step_rect!(cache::NRRectCache, Y::AbstractMatrix{ComplexF64}, V::Vector{ComplexF64}, Pspec::Vector{Float64}, Qspec::Vector{Float64}, Vm::Vector{Float64}; kwargs...) =
+   nr_refine_step_rect!(cache, sparse_Y(Y), V, Pspec, Qspec, Vm; kwargs...)
 
 # =============================================================================
-# src/solver_core.jl  (DROP-IN ADDITION)
-# =============================================================================
-# Adds a sparse variant of the direct PV APSLF kernel:
+# Direct PV APSLF kernel (sparse):
 #   - Builds the augmented real system Asys as SparseMatrixCSC{Float64}
 #   - Assembles the Y-block by iterating nnz(Y) (no O(n^2) dense fill)
 #   - Uses sparse LU once, then ldiv! per series order
-#
-# Notes:
-# - Expects Y to be sparse for best performance; will convert dense Y to sparse.
-# - Uses the same output contract as apslf_pf_pv_direct.
-# - Docstrings/comments are in English (as per your preference).
 
 """
-    apslf_pf_pv_direct_sparse(Y, bustype, Pspec, Qspec, Vm; kwargs...) -> (V, Qpv, Vcoeff, Wcoeff, Qcoeff)
+    apslf_pf_pv_direct(Y, bustype, Pspec, Qspec, Vm; kwargs...) -> (V, Qpv, Vcoeff, Wcoeff, Qcoeff)
 
-Sparse variant of `apslf_pf_pv_direct`.
+Direct APSLF PV (GridCal-style augmented real system).
 
-Key differences vs dense version:
-- Builds the constant augmented real system `Asys` as sparse CSC (Float64).
-- Assembles network block from `Y` using nnz iteration (sparse traversal).
-- Uses sparse LU (`lu(Asys)`) once and reuses it across all series orders.
+Purpose:
+Solve AC power flow with PV buses directly in the APSLF recursion by solving,
+at each series order `n`, a single augmented real linear system whose unknowns
+include the PV reactive power coefficient `Q^(n-1)` (shifted storage).
 
-This is the right kernel for batch processing on large sparse networks and is
-also the correct starting point for a future GPU sparse-direct implementation.
+Key series:
+- Voltages: `V(s) = Σ_{n=0..order} V^(n) s^n`
+- Inverse:  `W(s) = 1/V(s) = Σ_{n=0..order} W^(n) s^n`
+- PV Q:     `Q_pv(s) = Σ_{n=0..order-1} Q^(n) s^n`
 
-See `apslf_pf_pv_direct` docstring for algorithmic background and semantics.
+SHIFTED Q storage:
+`Qcoeff :: npv × order` where column `n` stores `Q^(n-1)`.
+
+Augmented real system (constant for all `n>0`):
+Unknown vector:
+`x = [ Vr(nonslack); Vi(nonslack); Q^(n-1)(pv) ]`
+Size: `2*(nbus-1) + npv`.
+
+The system is assembled as a sparse CSC matrix from the nonzeros of `Y` and
+factorized once with sparse LU (UMFPACK); the factorization is reused for
+every order. A dense `Y` is converted to `SparseMatrixCSC` on entry.
+`apslf_pf_pv_direct_sparse` is the same kernel under its former name.
+
+Evaluation at `s=1`:
+- Via Padé or direct series sum for `V` and `Qpv`.
+
+Optional:
+- NR polishing (finite-difference Jacobian) for robustness/benchmark parity.
+- Consistency override `qpv_from_inj=true` recomputes PV `Q` from final injections.
 """
-function apslf_pf_pv_direct_sparse(
-   Y::AbstractMatrix{ComplexF64},
+function apslf_pf_pv_direct(
+   Y::SparseY,
    bustype::Vector{Symbol},
    Pspec::Vector{Float64},
    Qspec::Vector{Float64},
@@ -2260,8 +2149,7 @@ function apslf_pf_pv_direct_sparse(
    @assert 1 <= slack <= nbus
    @assert order >= 1
 
-   # Force sparse Y for nnz traversal (cheap if already sparse)
-   Yuse = issparse(Y) ? (Y::SparseMatrixCSC{ComplexF64,Int}) : sparse(Y)
+   Yuse = Y
 
    # Identify PV buses (accept :pv or :PV etc.)
    pv = findall(i -> _is_pv(bustype[i]), 1:nbus)
@@ -2298,6 +2186,9 @@ function apslf_pf_pv_direct_sparse(
    Wcoeff[:, 1] .= 1.0 ./ V0
    Wcoeff[slack, 1] = 1.0 / Vslack
    npv > 0 && (Qcoeff[:, 1] .= 0.0)
+   if nn == 0   # slack only: nothing to solve (UMFPACK rejects a 0×0 matrix)
+      return Vcoeff[:, 1], zeros(Float64, npv), Vcoeff, Wcoeff, Qcoeff
+   end
 
    # -----------------------
    # Build sparse augmented real system Asys (constant for all n>0)
@@ -2422,7 +2313,7 @@ function apslf_pf_pv_direct_sparse(
    # Debug helpers
    # -----------------------
    function dbg_print_header()
-      println("\n[apslf_pf_pv_direct_sparse] DEBUG")
+      println("\n[apslf_pf_pv_direct] DEBUG")
       println(
          "  nbus=$(nbus), slack=$(slack), npv=$(npv), order=$(order), use_pade=$(use_pade), germ=$(germ)",
       )
@@ -2446,10 +2337,10 @@ function apslf_pf_pv_direct_sparse(
       @printf("  %3d | %10.3e | %10.3e | %10.3e | %10.3e | %10.3e\n", n, norm(rhs), maxV, nrmV, maxQ, nrmQ)
    end
 
-   debug && dbg_print_header()
+   debug && _kernel(dbg_print_header)()
 
    # -----------------------
-   # Convolution helpers (same semantics as dense kernel)
+   # Convolution helpers (known-only, SHIFTED Q storage)
    # -----------------------
    function conv_Q_Wc_known_shifted(n::Int, kpv::Int, bus::Int)
       acc = 0.0 + 0.0im
@@ -2482,7 +2373,7 @@ function apslf_pf_pv_direct_sparse(
    Wc_prev = zeros(ComplexF64, nbus)  # conj(W^(n-1)) buffer
 
    for n = 1:order
-      _maybe_check_timeout(timeout_check, :apslf_direct_sparse_order)
+      _maybe_check_timeout(timeout_check, :apslf_direct_order)
       @inbounds for i = 1:nbus
          Wc_prev[i] = conj(Wcoeff[i, n])  # Wcoeff col n is W^(n-1)
       end
@@ -2511,7 +2402,7 @@ function apslf_pf_pv_direct_sparse(
             rhs[r_im] = imag(f)
 
          else
-            error("apslf_pf_pv_direct_sparse: unsupported bustype at bus $i: $(bustype[i])")
+            error("apslf_pf_pv_direct: unsupported bustype at bus $i: $(bustype[i])")
          end
       end
 
@@ -2551,7 +2442,7 @@ function apslf_pf_pv_direct_sparse(
       end
 
       if debug && (n <= debug_maxn) && (n % debug_every == 0)
-         dbg_print_row(n, rhs)
+         _kernel(dbg_print_row)(n, rhs)
       end
    end
 
@@ -2613,434 +2504,6 @@ function apslf_pf_pv_direct_sparse(
       end
 
       if (maxP > mis_tol_p) || (maxQpq > mis_tol_q) || (maxVpv > v_tol) || (maxQpvDiff > qpv_tol)
-         println("\n[apslf_pf_pv_direct_sparse] SELF-CHECK (only printed on violation)")
-         @printf("  max |P mismatch| (p.u.)         = %.6e   (tol %.1e)\n", maxP, mis_tol_p)
-         @printf("  max |Q mismatch| on PQ (p.u.)   = %.6e   (tol %.1e)\n", maxQpq, mis_tol_q)
-         @printf("  max | |V|-Vsp | on PV (p.u.)    = %.6e   (tol %.1e)\n", maxVpv, v_tol)
-         @printf("  max |Qpv_series - imag(Sinj)|   = %.6e   (tol %.1e)\n", maxQpvDiff, qpv_tol)
-      end
-   end
-
-   return V, Qpv, Vcoeff, Wcoeff, Qcoeff
-end
-
-
-"""
-    apslf_pf_pv_direct(Y, bustype, Pspec, Qspec, Vm; kwargs...) -> (V, Qpv, Vcoeff, Wcoeff, Qcoeff)
-
-Direct APSLF PV (GridCal-style augmented real system), forced flat germ.
-
-Purpose:
-Solve AC power flow with PV buses directly in the APSLF recursion by solving,
-at each series order `n`, a single augmented real linear system whose unknowns
-include the PV reactive power coefficient `Q^(n-1)` (shifted storage).
-
-Key series:
-- Voltages: `V(s) = Σ_{n=0..order} V^(n) s^n`
-- Inverse:  `W(s) = 1/V(s) = Σ_{n=0..order} W^(n) s^n`
-- PV Q:     `Q_pv(s) = Σ_{n=0..order-1} Q^(n) s^n`
-
-SHIFTED Q storage:
-`Qcoeff :: npv × order` where column `n` stores `Q^(n-1)`.
-
-Augmented real system (constant for all `n>0`):
-Unknown vector:
-`x = [ Vr(nonslack); Vi(nonslack); Q^(n-1)(pv) ]`
-Size: `2*(nbus-1) + npv`.
-
-Evaluation at `s=1`:
-- Via Padé or direct series sum for `V` and `Qpv`.
-
-Optional:
-- NR polishing (finite-difference Jacobian) for robustness/benchmark parity.
-- Consistency override `qpv_from_inj=true` recomputes PV `Q` from final injections.
-"""
-function apslf_pf_pv_direct(
-   Y::AbstractMatrix{ComplexF64},
-   bustype::Vector{Symbol},
-   Pspec::Vector{Float64},
-   Qspec::Vector{Float64},
-   Vm::Vector{Float64};
-   slack::Int = 1,
-   Vslack::ComplexF64 = 1.0 + 0.0im,
-   order::Int = 24,
-   use_pade::Bool = true,
-   germ::Symbol = :deviation,
-   evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
-   debug::Bool = false,
-   debug_every::Int = 1,
-   debug_maxn::Int = order,
-   self_check::Bool = true,
-   mis_tol_p::Float64 = 1e-6,
-   mis_tol_q::Float64 = 1e-6,
-   v_tol::Float64 = 1e-6,
-   qpv_tol::Float64 = 1e-6,
-   qpv_from_inj::Bool = true,
-   timeout_check = nothing,
-)
-   nbus = length(bustype)
-   @assert size(Y, 1) == nbus && size(Y, 2) == nbus
-   @assert length(Pspec) == nbus && length(Qspec) == nbus && length(Vm) == nbus
-   @assert 1 <= slack <= nbus
-   @assert order >= 1
-   Yuse = Y
-   pv = findall(i -> _is_pv(bustype[i]), 1:nbus)
-   npv = length(pv)
-   # Fast maps (avoid Dict/findfirst in hot paths)
-   nonslack = [i for i = 1:nbus if i != slack]
-   nn = length(nonslack)
-
-   pos_ns = zeros(Int, nbus)         # bus -> position in nonslack (0 if slack)
-   @inbounds for (t, bus) in enumerate(nonslack)
-      pos_ns[bus] = t
-   end
-
-   pv_pos = zeros(Int, nbus)         # bus -> position in pv list (0 if not pv)
-   @inbounds for (k, bus) in enumerate(pv)
-      pv_pos[bus] = k
-   end
-
-   # -----------------------
-   # Allocate coefficient arrays (PF ordering)
-   #
-   # Convention: column 1 stores order 0 coefficient:
-   #   Vcoeff[:,1] = V^(0), Vcoeff[:,n+1] = V^(n)
-   #   Wcoeff similarly.
-   #   Qcoeff[:,n] stores Q^(n-1) (SHIFTED).
-   # -----------------------
-   Vcoeff = zeros(ComplexF64, nbus, order + 1)  # col 1 => V⁽0⁾
-   Wcoeff = zeros(ComplexF64, nbus, order + 1)  # col 1 => W⁽0⁾
-   Qcoeff = zeros(Float64, npv, order)        # col 1 => Q⁽0⁾  (SHIFTED: stores Q⁽n-1⁾ at step n)
-
-   # -----------------------
-   # Germ: canonical flat 1∠0 (germ=:flat) or no-load solution (germ=:noload)
-   #
-   # V^(0) = 1 at all buses (flat) or the no-load voltage profile (noload),
-   # slack set to Vslack. W^(0) = 1/V^(0). For PV: Q^(0) = 0.
-   # -----------------------
-   V0 = fill(1.0 + 0.0im, nbus)
-   V0[nonslack] .= apslf_germ(Yuse, nonslack, slack, Vslack, germ)
-   V0[slack] = Vslack
-   # :deviation embedding: constant matrix Y0 = Y - diag(d), d = Y·1 ramped with s on the RHS
-   drow = germ == :deviation ? apslf_row_sums(Yuse) : zeros(ComplexF64, nbus)
-   Vcoeff[:, 1] .= V0
-   Wcoeff[:, 1] .= 1.0 ./ V0
-   Wcoeff[slack, 1] = 1.0 / Vslack
-
-   if npv > 0
-      Qcoeff[:, 1] .= 0.0  # Q⁽0⁾ = 0
-   end
-
-   # -----------------------
-   # Build constant augmented real system Asys for all n>0
-   #
-   # Unknown vector:
-   #   x = [ Vr(nonslack); Vi(nonslack); Q^(n-1)(pv) ]
-   #
-   # Network equations (for each nonslack bus i) in real/imag split:
-   #   (Y V^(n))_i + PV-coupling-term = rhs_i^(n)
-   #
-   # PV coupling term corresponds to:
-   #   (-j) Q^(n-1) * conj(W^(0))   moved to LHS
-   #
-   # PV magnitude constraint row for each PV bus i:
-   #   Re( conj(V0_i) * V_i^(n) ) = eps_i^(n)
-   # With V0_i = 1 (flat), this is simply Re(V_i^(n)) = eps_i^(n).
-   # (But code uses general expression via V0[bus].)
-   # -----------------------
-   nunk = 2 * nn + npv
-
-   Asys = zeros(Float64, nunk, nunk)
-
-   # conj(W^(0)) used in PV coupling term
-   W0c = conj.(Wcoeff[:, 1])
-
-   # Network equation rows for each nonslack bus i
-   for (row_i, i) in enumerate(nonslack)
-      r_re = 2 * (row_i - 1) + 1
-      r_im = r_re + 1
-
-      # Contribution of Y * V^(n) for nonslack voltage unknowns.
-      # If V_k^(n) = Vr + jVi, then:
-      #   Y_ik V_k = (g + jb)(Vr + jVi)
-      #           = (g*Vr - b*Vi) + j(b*Vr + g*Vi)
-      @inbounds for (col_t, kbus) in enumerate(nonslack)
-         c_vr = col_t
-         c_vi = nn + col_t
-
-         yik = Yuse[i, kbus]
-         (germ == :deviation && kbus == i) && (yik -= drow[i])   # Y0 = Y - diag(d)
-         g = real(yik)
-         b = imag(yik)
-
-         Asys[r_re, c_vr] += g
-         Asys[r_re, c_vi] += -b
-
-         Asys[r_im, c_vr] += b
-         Asys[r_im, c_vi] += g
-      end
-
-      # PV coupling: the RHS term (-j) Q^(n-1) * conj(W^(0)) moved to the LHS
-      # becomes (+j) Q W0*, with (+j)QW0* = -Q*imag(W0*) + j*(Q*real(W0*)).
-      # The sign must match the known lower-order Q terms on the RHS
-      # (-j Σ Q^(m) conj(W^(n-1-m))); with the opposite sign the recursion is
-      # inconsistent from order 2 on and the PV active power is not met.
-      if _is_pv(bustype[i])
-         pvk = pv_pos[i]
-         @assert pvk > 0
-         c_q = 2 * nn + pvk
-         Asys[r_re, c_q] += -imag(W0c[i])
-         Asys[r_im, c_q] += real(W0c[i])
-      end
-   end
-
-   # PV magnitude constraints rows:
-   # Re( conj(V0_i) * V_i^(n) ) = eps_i^(n)
-   # With V_i^(n) = Vr + jVi, and conj(V0)=Re(V0)-jIm(V0):
-   #   Re( conj(V0)*(Vr+jVi) ) = Re(V0)*Vr + Im(V0)*Vi
-   for (k, bus) in enumerate(pv)
-      r = 2 * nn + k
-      t = pos_ns[bus]
-      @assert t > 0
-      Asys[r, t] = real(V0[bus])     # Vr coefficient
-      Asys[r, nn+t] = imag(V0[bus])     # Vi coefficient
-   end
-
-   Fsys = lu(Asys)
-
-   # -----------------------
-   # Debug helpers (optional)
-   # -----------------------
-   function dbg_print_header()
-      println("\n[apslf_pf_pv_direct] DEBUG")
-      println(
-         "  nbus=$(nbus), slack=$(slack), npv=$(npv), order=$(order), use_pade=$(use_pade), germ=$(germ)",
-      )
-      println("  Asys size = $(size(Asys))")
-      println("  columns: n | ||rhs||₂ | max|Vn| | ||Vn||₂ | max|Q_{n-1}| | ||Q_{n-1}||₂")
-   end
-
-   function dbg_print_row(n::Int, rhs::Vector{Float64})
-      Vn = Vcoeff[:, n+1]
-      maxV = maximum(abs.(Vn))
-      nrmV = norm(Vn)
-
-      maxQ = 0.0
-      nrmQ = 0.0
-      if npv > 0
-         Qn1 = Qcoeff[:, n]  # Q_{n-1} stored at column n
-         maxQ = maximum(abs.(Qn1))
-         nrmQ = norm(Qn1)
-      end
-
-      @printf("  %3d | %10.3e | %10.3e | %10.3e | %10.3e | %10.3e\n", n, norm(rhs), maxV, nrmV, maxQ, nrmQ)
-   end
-
-   if debug
-      dbg_print_header()
-   end
-
-   # -----------------------
-   # Convolution helpers (known-only, SHIFTED Q storage)
-   #
-   # At recursion step n:
-   # - Unknown: Q^(n-1) for PV buses (solved via augmented system)
-   # - Known:   Q^(0..n-2) already stored in Qcoeff[:,1..n-1]
-   #
-   # conv_Q_Wc_known_shifted(n):
-   #   Σ_{m=0..n-2} Q^(m) * conj(W^(n-1-m))
-   #
-   # conv_V_Vc_mid(n):
-   #   Σ_{m=1..n-1} V^(m) * conj(V^(n-m))
-   # -----------------------
-   function conv_Q_Wc_known_shifted(n::Int, kpv::Int, bus::Int)
-      acc = 0.0 + 0.0im
-      if n <= 1
-         return acc
-      end
-      @inbounds for m = 0:(n-2)
-         Qm = Qcoeff[kpv, m+1]                      # Q⁽m⁾
-         Wc = conj(Wcoeff[bus, (n-1-m)+1])        # W*⁽n-1-m⁾
-         acc += Qm * Wc
-      end
-      return acc
-   end
-
-   function conv_V_Vc_mid(n::Int, bus::Int)
-      acc = 0.0 + 0.0im
-      if n <= 1
-         return acc
-      end
-      @inbounds for m = 1:(n-1)
-         acc += Vcoeff[bus, m+1] * conj(Vcoeff[bus, (n-m)+1])
-      end
-      return acc
-   end
-
-   # -----------------------
-   # Main recursion
-   # -----------------------
-   S = ComplexF64.(Pspec, Qspec)
-   Sstar = conj.(S)
-   rhs = zeros(Float64, nunk)
-   x = zeros(Float64, nunk)
-   Wc_prev = zeros(ComplexF64, nbus)   # conj(W^(n-1)) for all buses (buffer)
-   for n = 1:order
-      _maybe_check_timeout(timeout_check, :apslf_direct_order)
-      # W*^(n-1) (since Wcoeff col n is W^(n-1))
-      @inbounds for i = 1:nbus
-         Wc_prev[i] = conj(Wcoeff[i, n])
-      end
-
-      fill!(rhs, 0.0)
-
-
-      # Network equations for each nonslack bus i
-      for (row_i, i) in enumerate(nonslack)
-         r_re = 2 * (row_i - 1) + 1
-         r_im = r_re + 1
-
-         if _is_pq(bustype[i])
-            # PQ coefficient equation:
-            #   (Y V^(n))_i = conj(S_i) * conj(W_i^(n-1))
-            f = Sstar[i] * Wc_prev[i]
-            germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
-            rhs[r_re] = real(f)
-            rhs[r_im] = imag(f)
-
-         elseif _is_pv(bustype[i])
-            # PV coefficient equation arranged as:
-            #   (Y V^(n))_i + (-j) Q^(n-1)_i * conj(W_i^(0))
-            #       = P_i * conj(W_i^(n-1)) - j * Σ_{m=0..n-2} Q^(m)_i * conj(W_i^(n-1-m))
-            #
-            # Here: RHS is the known part
-            kpv = pv_pos[i]
-            @assert kpv > 0
-            acc = conv_Q_Wc_known_shifted(n, kpv, i)
-
-            f = Pspec[i] * Wc_prev[i] - 1.0im * acc
-            germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
-            rhs[r_re] = real(f)
-            rhs[r_im] = imag(f)
-
-         else
-            error("Unsupported bustype at bus $i: $(bustype[i])")
-         end
-      end
-
-      # PV magnitude constraint RHS ε_i^(n):
-      #   Re(conj(V0_i) V_i^(n)) = 0.5 δ_{n1}(Vm_i^2 - |V0_i|^2) - 0.5 Re( Σ_{m=1..n-1} V_i^(m) conj(V_i^(n-m)) )
-      for (k, bus) in enumerate(pv)
-         r = 2 * nn + k
-         δn1 = (n == 1) ? 1.0 : 0.0
-         eps = 0.5 * δn1 * (Vm[bus]^2 - abs(V0[bus])^2) - 0.5 * real(conv_V_Vc_mid(n, bus))
-         rhs[r] = eps
-      end
-
-      # Solve for unknowns at order n
-      #x = Fsys \ rhs
-      ldiv!(x, Fsys, rhs)
-
-      # Write back V^(n) for nonslack buses (complex form)
-      @inbounds for (t, bus) in enumerate(nonslack)
-         Vr = x[t]
-         Vi = x[nn+t]
-         Vcoeff[bus, n+1] = complex(Vr, Vi)
-      end
-      Vcoeff[slack, n+1] = 0.0 + 0.0im
-
-      # Write back Q^(n-1) for PV buses into shifted storage column n
-      @inbounds for k = 1:npv
-         Qcoeff[k, n] = x[2*nn+k]
-      end
-
-      # Update inverse series W = 1/V with general germ V^(0)
-      # w_n = -(1/v0) * Σ_{m=1..n} v_m w_{n-m}
-      @inbounds for i = 1:nbus
-         if i == slack
-            Wcoeff[i, n+1] = 0.0 + 0.0im
-            continue
-         end
-         acc = 0.0 + 0.0im
-         for m = 1:n
-            acc += Vcoeff[i, m+1] * Wcoeff[i, (n-m)+1]
-         end
-         Wcoeff[i, n+1] = -acc / Vcoeff[i, 1]
-      end
-
-      if debug && (n <= debug_maxn) && (n % debug_every == 0)
-         dbg_print_row(n, rhs)
-      end
-   end
-
-   # -----------------------
-   # Evaluate at s=1 via Padé or series sum
-   # -----------------------
-   V = zeros(ComplexF64, nbus)
-   V[slack] = Vslack
-
-   Qpv = zeros(Float64, npv)
-
-   eval_opts = isnothing(evaluation_options) ? APSLFEvaluationOptions(mode = use_pade ? :pade : :taylor) : evaluation_options
-   @inbounds for i = 1:nbus
-      i == slack && continue
-      cV = @view Vcoeff[i, :]
-      V[i] = evaluate_series(cV, eval_opts; collect_logs = false).voltage
-   end
-   if npv > 0
-      @inbounds for k = 1:npv
-         cQ = ComplexF64.(Qcoeff[k, :], 0.0)
-         Qpv[k] = real(evaluate_series(cQ, eval_opts; collect_logs = false).voltage)
-      end
-   end
-
-   # Optionally recompute PV Q from injections for consistency:
-   #   Q_i = imag( S_inj(V)_i )
-   if qpv_from_inj && npv > 0
-      Sinj = calc_injections(Yuse, V)
-      @inbounds for (k, bus) in enumerate(pv)
-         Qpv[k] = imag(Sinj[bus])
-      end
-   end
-
-   # -----------------------
-   # Self-check (prints ONLY if something is off)
-   #
-   # Checks at the final evaluated V (s=1):
-   # - P mismatch on all non-slack buses
-   # - Q mismatch on PQ buses
-   # - |V| mismatch on PV buses
-   # - consistency between Qpv output and imag(Sinj) (optional)
-   # -----------------------
-   if self_check
-      Sinj = calc_injections(Yuse, V)
-
-      maxP = 0.0
-      @inbounds for i = 1:nbus
-         i == slack && continue
-         maxP = max(maxP, abs(real(Sinj[i]) - Pspec[i]))
-      end
-
-      maxQpq = 0.0
-      @inbounds for i = 1:nbus
-         i == slack && continue
-         _is_pq(bustype[i]) || continue
-         maxQpq = max(maxQpq, abs(imag(Sinj[i]) - Qspec[i]))
-      end
-
-      maxVpv = 0.0
-      @inbounds for bus in pv
-         maxVpv = max(maxVpv, abs(abs(V[bus]) - Vm[bus]))
-      end
-
-      maxQpvDiff = 0.0
-      if npv > 0
-         @inbounds for (k, bus) in enumerate(pv)
-            maxQpvDiff = max(maxQpvDiff, abs(Qpv[k] - imag(Sinj[bus])))
-         end
-      end
-
-      if (maxP > mis_tol_p) || (maxQpq > mis_tol_q) || (maxVpv > v_tol) || (maxQpvDiff > qpv_tol)
          println("\n[apslf_pf_pv_direct] SELF-CHECK (only printed on violation)")
          @printf("  max |P mismatch| (p.u.)         = %.6e   (tol %.1e)\n", maxP, mis_tol_p)
          @printf("  max |Q mismatch| on PQ (p.u.)   = %.6e   (tol %.1e)\n", maxQpq, mis_tol_q)
@@ -3052,6 +2515,23 @@ function apslf_pf_pv_direct(
    return V, Qpv, Vcoeff, Wcoeff, Qcoeff
 end
 
+apslf_pf_pv_direct(Y::AbstractMatrix{ComplexF64}, bustype::Vector{Symbol}, Pspec::Vector{Float64}, Qspec::Vector{Float64}, Vm::Vector{Float64}; kwargs...) =
+   apslf_pf_pv_direct(sparse_Y(Y), bustype, Pspec, Qspec, Vm; kwargs...)
+
+"""
+    apslf_pf_pv_direct_sparse(Y, bustype, Pspec, Qspec, Vm; kwargs...)
+
+Former name of the sparse direct PV kernel, kept for existing calls; the same
+as [`apslf_pf_pv_direct`](@ref).
+"""
+apslf_pf_pv_direct_sparse(Y::AbstractMatrix{ComplexF64}, bustype::Vector{Symbol}, Pspec::Vector{Float64}, Qspec::Vector{Float64}, Vm::Vector{Float64}; kwargs...) =
+   apslf_pf_pv_direct(Y, bustype, Pspec, Qspec, Vm; kwargs...)
+
+
+# The inner kernel (PQ workspace or direct PV) is chosen at run time and called
+# through `_kernel`; the kernel result types are asserted at the call sites.
+const _PVKernelResult = Tuple{Vector{ComplexF64},Vector{Float64},Matrix{ComplexF64},Matrix{ComplexF64},Matrix{Float64}}
+
 """
     solve_pf_apslf_with_pv_q_limits(Y, bustype, Pspec, Qspec, Vm, Qmin, Qmax; kwargs...)
         -> NamedTuple
@@ -3059,12 +2539,17 @@ end
 Outer-loop PV handling + Q-limits around an inner APSLF solver.
 
 Inner modes:
-- `inner = :pq`          # :pq | :direct_pv | :direct_pv_sparse
+- `inner = :pq`          # :pq | :direct_pv
   Solve using PQ-only APSLF (`apslf_pq`) and enforce PV `|V|` by iteratively
   adjusting `Q` at PV buses (secant loop). Then enforce Q-limits (PV→PQ switching)
   in an outer loop.
 - `inner = :direct_pv`:
   Use the direct PV kernel (`apslf_pf_pv_direct`) inside the same Q-limit outer loop.
+  `:direct_pv_sparse` is accepted as the former name of the same kernel.
+
+Matrices: `Y` (and `nr_polish_Y`) may be dense or sparse; they are converted to
+`SparseMatrixCSC` once, the solver itself is sparse only. `use_sparse` and
+`sparse_nbus_min` are accepted for existing calls and have no effect.
 
 Q-limit logic:
 After a solve, for any PV bus `i`:
@@ -3085,7 +2570,7 @@ Convergence summary:
   and no switching occurs.
 
 APSLF germ semantics (`germ` keyword):
-- `germ = :flat` (default): canonical analytic germ `V(s=0)=1∠0`. Exact at
+- `germ = :flat` (legacy): canonical analytic germ `V(s=0)=1∠0`. Exact at
   order 0 only for a pure series network with `Vslack = 1`; with line shunts,
   transformer taps or phase shifters the result needs the NR polish.
 - `germ = :noload`: the germ is the linear no-load solution of the
@@ -3117,6 +2602,70 @@ function solve_pf_apslf_with_pv_q_limits(
    Vm::Vector{Float64},
    Qmin::Vector{Float64},
    Qmax::Vector{Float64};
+   inner::Symbol = :pq,
+   nr_polish_Y::Union{Nothing,AbstractMatrix{ComplexF64}} = nothing,
+   use_sparse::Union{Bool,Symbol} = :auto,   # no effect since 0.10.0 (sparse only)
+   sparse_nbus_min::Int = 110,               # no effect since 0.10.0 (sparse only)
+   kwargs...,
+)
+   # The solver is sparse only: Y (and nr_polish_Y) are converted once here.
+   # :direct_pv_sparse is the former name of the one direct PV kernel.
+   Ynr = nr_polish_Y === nothing ? nothing : sparse_Y(nr_polish_Y)
+   # The inference barrier keeps the solver body compiled for the call at
+   # hand (nr_polish_Y given or not) instead of for both variants.
+   return _kernel(_solve_pf_apslf_with_pv_q_limits)(
+      sparse_Y(Y),
+      bustype,
+      Pspec,
+      Qspec,
+      Vm,
+      Qmin,
+      Qmax;
+      inner = inner === :direct_pv_sparse ? :direct_pv : inner,
+      nr_polish_Y = Ynr,
+      kwargs...,
+   )
+end
+
+# One line per outer iteration at verbose >= 2.
+function _print_outer_iteration(outer::Int, inner::Symbol, switched::Bool, npv_now::Int, npq_now::Int, max_v_err::Float64, maxP::Float64, maxQpq::Float64)
+   if inner == :pq
+      @printf(
+         "[outer %2d] inner=%s  switched=%s  npv=%d npq=%d  max_v_err=%.3e  maxP=%.3e  maxQpq=%.3e\n",
+         outer,
+         string(inner),
+         string(switched),
+         npv_now,
+         npq_now,
+         max_v_err,
+         maxP,
+         maxQpq
+      )
+   else
+      @printf(
+         "[outer %2d] inner=%s  switched=%s  npv=%d npq=%d  maxP=%.3e  maxQpq=%.3e\n",
+         outer,
+         string(inner),
+         string(switched),
+         npv_now,
+         npq_now,
+         maxP,
+         maxQpq
+      )
+   end
+   return nothing
+end
+
+# Solver body of solve_pf_apslf_with_pv_q_limits; `Y` and `nr_polish_Y` are
+# already sparse.
+function _solve_pf_apslf_with_pv_q_limits(
+   Y::SparseY,
+   bustype::Vector{Symbol},
+   Pspec::Vector{Float64},
+   Qspec::Vector{Float64},
+   Vm::Vector{Float64},
+   Qmin::Vector{Float64},
+   Qmax::Vector{Float64};
    slack::Int = 1,
    Vslack::Union{Nothing,ComplexF64} = nothing,
    order::Int = 24,
@@ -3136,7 +2685,7 @@ function solve_pf_apslf_with_pv_q_limits(
    pv_step0::Float64 = 0.05,
    pv_secant_damping::Float64 = 1.0,
    nr_polish::Bool = true,
-   nr_polish_Y::Union{Nothing,AbstractMatrix{ComplexF64}} = nothing,
+   nr_polish_Y::Union{Nothing,SparseY} = nothing,
    nr_q_polish::Bool = false,
    nr_max_iter::Int = 15,
    nr_tol::Float64 = 1e-10,
@@ -3151,8 +2700,6 @@ function solve_pf_apslf_with_pv_q_limits(
    mis_tol_q::Float64 = 1e-8,
    verbose::Int = 0,
    return_coeffs::Bool = false,
-   use_sparse::Union{Bool,Symbol} = :auto,
-   sparse_nbus_min::Int = 110,
    timeout_s::Real = 0.0,
    kwargs...,
 )
@@ -3181,21 +2728,15 @@ function solve_pf_apslf_with_pv_q_limits(
    if nr_polish_Y !== nothing
       @assert size(nr_polish_Y, 1) == nbus && size(nr_polish_Y, 2) == nbus
    end
-   @assert inner in (:pq, :direct_pv, :direct_pv_sparse) "inner must be :pq | :direct_pv | :direct_pv_sparse"
+   @assert inner in (:pq, :direct_pv) "inner must be :pq | :direct_pv (former name :direct_pv_sparse)"
    germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
    qdeg_tol >= 0.0 || throw(ArgumentError("qdeg_tol must be non-negative."))
    _warn_degenerate_q_limits(bustype, Qmin, Qmax; atol = qdeg_tol)
-   Yuse = maybe_sparse_Y(Y; nbus = nbus, use_sparse = use_sparse, sparse_nbus_min = sparse_nbus_min)
-   Ynr =
-      nr_polish_Y === nothing ? Yuse :
-      maybe_sparse_Y(nr_polish_Y; nbus = nbus, use_sparse = use_sparse, sparse_nbus_min = sparse_nbus_min)
+   Yuse = Y
+   Ynr = nr_polish_Y === nothing ? Yuse : nr_polish_Y
    use_nr_polish_y_for_post_metrics = nr_polish && nr_max_iter > 0 && nr_polish_Y !== nothing
    Ypost = use_nr_polish_y_for_post_metrics ? Ynr : Yuse
-   # Debug output for sparse policy
-   if verbose >= 2
-      y_type = issparse(Yuse) ? "sparse" : "dense"
-      println("APSLF: Using $y_type Y matrix (nbus=$nbus, threshold=$sparse_nbus_min)")
-   end
+   verbose >= 2 && println("APSLF: sparse Y matrix (nbus=$nbus, nnz=$(nnz(Yuse)))")
 
 
    bt = _canonicalize_bustype_lower(bustype)
@@ -3213,15 +2754,17 @@ function solve_pf_apslf_with_pv_q_limits(
 
    # Keep the last coefficient matrix we computed (only meaningful if return_coeffs=true)
    Vcoeff_last = return_coeffs ? zeros(ComplexF64, nbus, order + 1) : nothing
+   # Injection buffers, allocated before the closures that use them and never
+   # rebound, so the closures capture them with their concrete type.
+   Sinj = zeros(ComplexF64, nbus)
+   Iinj = zeros(ComplexF64, nbus)
    # APSLF PQ workspace (reuses Yred LU across many inner=:pq solves)
    ws_pq =
       (inner == :pq) ?
-      build_apslf_pq_workspace(
+      _kernel(build_apslf_pq_workspace)(
          Yuse;
          slack = slack,
          order = order,
-         use_sparse = false, # already applied policy above, TODO: check comment.
-         sparse_nbus_min = sparse_nbus_min,
          germ = germ,
       ) : nothing
 
@@ -3334,7 +2877,6 @@ function solve_pf_apslf_with_pv_q_limits(
                   Vm;
                   Vslack = Vsl,
                   damping = actual_damping,
-                  use_sparse = (Ynr isa SparseMatrixCSC{ComplexF64}),
                )
             catch err
                _is_recoverable_linear_solve_error(err) || rethrow(err)
@@ -3425,11 +2967,15 @@ function solve_pf_apslf_with_pv_q_limits(
    # Inner solve wrapper:
    # Returns always (Vvec, Sinj_loc, Vcoeff_full_or_nothing)
    # -----------------------
+   # The kernel sits in a Ref because the non-finite fallback below switches
+   # it for one call (a reassigned captured variable would be boxed).
+   inner_kernel = Ref(inner)
    function inner_solve_given_Q(Qwork::Vector{Float64}; want_coeffs::Bool = false)
-      if inner == :pq
+      kernel = inner_kernel[]
+      if kernel == :pq
          S = make_S(Pspec, Qwork)
 
-         Vvec, Vcoeff_red, _ = apslf_pq_solve!(
+         Vvec, Vcoeff_red, _ = _kernel(apslf_pq_solve!)(
             ws_pq,
             S;
             Vslack = Vsl,
@@ -3437,7 +2983,7 @@ function solve_pf_apslf_with_pv_q_limits(
             germ = germ,
             evaluation_options = evaluation_options,
             timeout_check = check_solver_timeout!,
-         )
+         )::Tuple{Vector{ComplexF64},Matrix{ComplexF64},Matrix{ComplexF64}}
 
          _assert_finite_vec(Vvec, "inner voltage state V")
          want_coeffs && _assert_finite_coeff_matrix(Vcoeff_red, "inner voltage coefficients")
@@ -3456,32 +3002,9 @@ function solve_pf_apslf_with_pv_q_limits(
             return Vvec, Sinj_loc, nothing
          end
 
-      elseif inner == :direct_pv
-         Vvec, _, Vcoeff_full, _, _ = apslf_pf_pv_direct(
-            Yuse,
-            bt,
-            Pspec,
-            Qwork,
-            Vm;
-            slack = slack,
-            Vslack = Vsl,
-            order = order,
-            use_pade = use_pade,
-            germ = germ,
-            evaluation_options = evaluation_options,
-            debug = false,
-            self_check = false,
-            qpv_from_inj = true,
-            timeout_check = check_solver_timeout!,
-         )
-         _assert_finite_vec(Vvec, "inner voltage state V")
-         want_coeffs && _assert_finite_coeff_matrix(Vcoeff_full, "inner voltage coefficients")
-         Sinj_loc = calc_injections(Yuse, Vvec)
-         return want_coeffs ? (Vvec, Sinj_loc, Vcoeff_full) : (Vvec, Sinj_loc, nothing)
-
       else
-         # :direct_pv_sparse
-         Vvec, _, Vcoeff_full, _, _ = apslf_pf_pv_direct_sparse(
+         # :direct_pv
+         Vvec, _, Vcoeff_full, _, _ = _kernel(apslf_pf_pv_direct)(
             Yuse,
             bt,
             Pspec,
@@ -3497,7 +3020,7 @@ function solve_pf_apslf_with_pv_q_limits(
             self_check = false,
             qpv_from_inj = true,
             timeout_check = check_solver_timeout!,
-         )
+         )::_PVKernelResult
          _assert_finite_vec(Vvec, "inner voltage state V")
          want_coeffs && _assert_finite_coeff_matrix(Vcoeff_full, "inner voltage coefficients")
          Sinj_loc = calc_injections(Yuse, Vvec)
@@ -3527,7 +3050,11 @@ function solve_pf_apslf_with_pv_q_limits(
    # -----------------------
    function print_final_report(converged::Bool, outer_iters::Int, V::Vector{ComplexF64}, Qwork::Vector{Float64})
       verbose >= 1 || return
+      _kernel(print_final_report_verbose)(converged, outer_iters, V, Qwork)
+      return
+   end
 
+   function print_final_report_verbose(converged::Bool, outer_iters::Int, V::Vector{ComplexF64}, Qwork::Vector{Float64})
       maxP, maxQpq = mismatch_metrics(V, Qwork)
 
       max_v_err = 0.0
@@ -3610,8 +3137,6 @@ function solve_pf_apslf_with_pv_q_limits(
    # Main outer loop
    # -----------------------
    V = zeros(ComplexF64, nbus)
-   Sinj = zeros(ComplexF64, nbus)
-   Iinj = zeros(ComplexF64, nbus)
 
    for outer = 1:max_outer
       check_solver_timeout!(:outer_iteration)
@@ -3710,53 +3235,42 @@ function solve_pf_apslf_with_pv_q_limits(
       # Step B: inner solve with current Q
       Vcoeff_opt = nothing
       try
-         V, Sinj, Vcoeff_opt = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
+         V, Sinj_inner, Vcoeff_opt = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
+         copyto!(Sinj, Sinj_inner)
       catch err
-         if _is_nonfinite_inner_error(err)
-            # Fallback for hard cases: when the PQ inner solve becomes non-finite,
-            # try one direct-PV inner evaluation before declaring failure.
-            if inner == :pq
-               fallback_inner = (nbus >= sparse_nbus_min) ? :direct_pv_sparse : :direct_pv
-               prev_inner = inner
-               local Vfb, Sfb, Cfb
-               try
-                  inner = fallback_inner
-                  Vfb, Sfb, Cfb = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
-                  V .= Vfb
-                  Sinj .= Sfb
-                  Vcoeff_opt = Cfb
-               catch fb_err
-                  _is_nonfinite_inner_error(fb_err) || rethrow(fb_err)
-                  inner = prev_inner
-                  print_final_report(false, outer, V, Q)
-                  return make_result(
-                     V = V,
-                     Sinj = Sinj,
-                     bt = bt,
-                     Q = Q,
-                     converged = false,
-                     outer_iters = outer,
-                     reason = :nonfinite_inner_state,
-                     Vcoeff = return_coeffs ? Vcoeff_last : nothing,
-                  )
-               end
-               inner = prev_inner
-               # Continue with fallback state.
-            else
-               print_final_report(false, outer, V, Q)
-               return make_result(
-                  V = V,
-                  Sinj = Sinj,
-                  bt = bt,
-                  Q = Q,
-                  converged = false,
-                  outer_iters = outer,
-                  reason = :nonfinite_inner_state,
-                  Vcoeff = return_coeffs ? Vcoeff_last : nothing,
-               )
+         _is_nonfinite_inner_error(err) || rethrow(err)
+         # Fallback for hard cases: when the PQ inner solve becomes non-finite,
+         # try one direct-PV inner evaluation before declaring failure. On
+         # success the outer loop continues with the fallback state.
+         fallback_ok = false
+         if inner == :pq
+            fallback_inner = :direct_pv
+            try
+               inner_kernel[] = fallback_inner
+               Vfb, Sfb, Cfb = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
+               V .= Vfb
+               Sinj .= Sfb
+               Vcoeff_opt = Cfb
+               fallback_ok = true
+            catch fb_err
+               _is_nonfinite_inner_error(fb_err) || rethrow(fb_err)
+            finally
+               inner_kernel[] = inner
             end
          end
-         rethrow(err)
+         if !fallback_ok
+            print_final_report(false, outer, V, Q)
+            return make_result(
+               V = V,
+               Sinj = Sinj,
+               bt = bt,
+               Q = Q,
+               converged = false,
+               outer_iters = outer,
+               reason = :nonfinite_inner_state,
+               Vcoeff = return_coeffs ? Vcoeff_last : nothing,
+            )
+         end
       end
       if return_coeffs
          Vcoeff_last .= Vcoeff_opt
@@ -3847,32 +3361,7 @@ function solve_pf_apslf_with_pv_q_limits(
 
       # Step D: convergence check
       if verbose >= 2
-         npv_now = count(==(:pv), bt)
-         npq_now = count(==(:pq), bt)
-         if inner == :pq
-            @printf(
-               "[outer %2d] inner=%s  switched=%s  npv=%d npq=%d  max_v_err=%.3e  maxP=%.3e  maxQpq=%.3e\n",
-               outer,
-               string(inner),
-               string(switched),
-               npv_now,
-               npq_now,
-               max_v_err,
-               maxP,
-               maxQpq
-            )
-         else
-            @printf(
-               "[outer %2d] inner=%s  switched=%s  npv=%d npq=%d  maxP=%.3e  maxQpq=%.3e\n",
-               outer,
-               string(inner),
-               string(switched),
-               npv_now,
-               npq_now,
-               maxP,
-               maxQpq
-            )
-         end
+         _kernel(_print_outer_iteration)(outer, inner, switched, count(==(:pv), bt), count(==(:pq), bt), max_v_err, maxP, maxQpq)
       end
 
       # Return on success
@@ -3986,7 +3475,7 @@ Can be overridden via kwargs to `solve_pf_apslf_with_pv_q_limits`.
 - Uses the canonical APSLF germ `V(s=0)=1∠0`
 
 # Performance Notes
-- Automatically selects sparse/dense matrix algorithms based on system size
+- Works on a sparse Y-bus; a dense `Y` in the case is converted once
 - Reuses LU factorizations across iterations for efficiency
 - Optional Newton-Raphson polishing for higher accuracy
 
@@ -3998,27 +3487,20 @@ Can be overridden via kwargs to `solve_pf_apslf_with_pv_q_limits`.
 function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
    @assert mode == :direct || mode == :outer "mode must be :direct or :outer"
 
-   Y = getfield(spec, :Y)
+   Y = sparse_Y(getfield(spec, :Y))   # converted once for all solves below
    nbus = size(Y, 1)
    kw = (; kwargs...)
    _handle_deprecated_apslf_germ_kwargs(kw; context = "solve_pf_apslf", strict = false)
 
    # default inner choice
    inner_auto = (mode == :direct) ? :direct_pv : :pq
-
-   # auto-upgrade to sparse kernel when Y is sparse or system is large
-   if mode == :direct
-      if issparse(Y) || nbus >= 110
-         inner_auto = :direct_pv_sparse
-      end
-   end
    inner_requested = haskey(kw, :inner) ? kw.inner : inner_auto
    kw_no_inner = haskey(kw, :inner) ? Base.structdiff(kw, NamedTuple{(:inner,)}((kw.inner,))) : kw
    kw_forward =
       haskey(kw_no_inner, :flatstart) ? Base.structdiff(kw_no_inner, NamedTuple{(:flatstart,)}((kw_no_inner.flatstart,))) :
       kw_no_inner
    verbose_level = haskey(kw_forward, :verbose) ? Int(kw_forward.verbose) : 0
-   dense_fallback_nbus_max = haskey(kw_forward, :dense_fallback_nbus_max) ? Int(kw_forward.dense_fallback_nbus_max) : 2000
+   # dense_fallback_nbus_max is accepted for existing calls; no effect since 0.10.0
    kw_forward =
       haskey(kw_forward, :dense_fallback_nbus_max) ?
       Base.structdiff(kw_forward, NamedTuple{(:dense_fallback_nbus_max,)}((kw_forward.dense_fallback_nbus_max,))) : kw_forward
@@ -4037,7 +3519,7 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
 
    Vslack = ComplexF64(getfield(spec, :Vm)[getfield(spec, :slack)], 0.0)
    res = solve_pf_apslf_with_pv_q_limits(
-      getfield(spec, :Y),
+      Y,
       getfield(spec, :bustype),
       getfield(spec, :Pspec),
       getfield(spec, :Qspec),
@@ -4050,34 +3532,15 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
       kw_forward...,
    )
 
-   # Robustness fallback path for direct mode:
-   # 1) If sparse-direct does not converge, optionally retry with dense-direct kernel.
-   # 2) If direct kernels still do not converge, retry with outer PQ loop.
-   #
-   # Dense-direct retry is skipped for large problems because it builds/factors
-   # dense augmented systems that are not viable for large sparse networks.
+   # Robustness fallback for direct mode: if the direct kernel does not
+   # converge, retry with the outer PQ loop (within the size bounds). The
+   # former dense-direct retry is gone: it solved the same augmented system
+   # with a dense instead of a sparse LU.
    if mode == :direct && !res.converged
-      if inner_requested == :direct_pv_sparse && nbus <= dense_fallback_nbus_max
-         res_dense = solve_pf_apslf_with_pv_q_limits(
-            getfield(spec, :Y),
-            getfield(spec, :bustype),
-            getfield(spec, :Pspec),
-            getfield(spec, :Qspec),
-            getfield(spec, :Vm),
-            getfield(spec, :Qmin),
-            getfield(spec, :Qmax);
-            slack = getfield(spec, :slack),
-            Vslack = Vslack,
-            inner = :direct_pv,
-            kw_forward...,
-         )
-         res_dense.converged && return merge(res_dense, (effective_mode = :direct,))
-      end
-
       npv_for_outer = count(bt -> _is_pv(bt), getfield(spec, :bustype))
       if nbus <= outer_fallback_nbus_max && npv_for_outer <= outer_fallback_pv_bus_max
          res_outer = solve_pf_apslf_with_pv_q_limits(
-            getfield(spec, :Y),
+            Y,
             getfield(spec, :bustype),
             getfield(spec, :Pspec),
             getfield(spec, :Qspec),
