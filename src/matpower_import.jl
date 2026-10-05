@@ -4,9 +4,9 @@
 # Author: Udo Schmitz
 # Organization: SOPTIM AG
 # Purpose: Minimal MATPOWER case-file (.m) reader for large integration cases
-#          such as the PEGASE networks, with detection of the transformer
-#          conventions (angle in degrees or radians, ratio or 1/ratio) from
-#          the solved state stored in the case file.
+#          such as the PEGASE networks, with the MATPOWER transformer
+#          conventions (an experimental detection from the stored state is
+#          available).
 #
 # Copyright 2026 SOPTIM AG
 #
@@ -86,25 +86,25 @@ function parse_matpower_m(path::AbstractString)
 end
 
 """
-    matpower_case(path; angle_unit = :auto, angle_sign = 0, ratio_convention = :auto,
+    matpower_case(path; angle_unit = :deg, angle_sign = 1, ratio_convention = :matpower,
                   sparse_output = true, verbose = 0)
 
 Build the APSLF case NamedTuple (`Y`, `bustype`, `Pspec`, `Qspec`, `Vm`,
 `Qmin`, `Qmax`, `slack`, `labels`, `baseMVA`, `branches`, `bus_shunts`,
 `V_ref`, `conventions`) from a MATPOWER case file.
 
-Transformer conventions differ between case sources. MATPOWER defines the
-branch `angle` column in degrees and `ratio` as the tap on the from side, but
-some converted cases (PEGASE among them) carry the angle in radians, with the
-opposite sign, and/or the inverse ratio. With the `:auto` defaults every
-combination (degrees/radians × sign × ratio/1/ratio) is tried and the one
-whose Y-bus reproduces the solved state `(Vm, Va)` stored in the bus block
-with the smallest total (L1) power mismatch is used; all trials and their
-mismatches are returned in `conventions`. The L1 norm is used because a
-wrong transformer convention shows up at the buses next to the transformers,
-which the maximum alone cannot separate from an imperfectly converged stored
-state. Force a convention with `angle_unit = :deg | :rad`,
-`angle_sign = +1 | -1` and `ratio_convention = :matpower | :inverse`.
+The file is read with the MATPOWER conventions: branch `angle` in degrees,
+`ratio` as the tap on the from side. `V_ref` is the state `(Vm, Va)` stored in
+the bus block; `conventions.ref_mismatch_pu` is its power mismatch on the
+imported Y-bus. A stored state need not be a solution of the MATPOWER model
+(the PEGASE files are not).
+
+Experimental: `angle_unit = :auto`, `angle_sign = 0` and
+`ratio_convention = :auto` try every combination (degrees/radians × sign ×
+ratio/1/ratio) and keep the one whose Y-bus reproduces the stored state with
+the smallest total (L1) power mismatch; all trials are returned in
+`conventions.trials`. Because the stored state need not match the model, this
+can pick a convention other than MATPOWER's.
 
 Buses of MATPOWER type 4 (isolated) and out-of-service branches/generators are
 dropped. Generators at a bus are aggregated (P, Q, Qmin, Qmax summed, `Vm`
@@ -113,9 +113,9 @@ generator becomes PQ.
 """
 function matpower_case(
    path::AbstractString;
-   angle_unit::Symbol = :auto,
-   angle_sign::Int = 0,
-   ratio_convention::Symbol = :auto,
+   angle_unit::Symbol = :deg,
+   angle_sign::Int = 1,
+   ratio_convention::Symbol = :matpower,
    sparse_output::Bool = true,
    verbose::Int = 0,
 )
@@ -239,10 +239,6 @@ function matpower_case(
          best = (unit = unit, sgn = sgn, conv = conv, mis = mx, l1 = l1, branches = branches, Y = Y)
       end
    end
-   if best.mis > 1e-2
-      @warn "matpower_case: the stored solution of $(mp.name) does not satisfy the power-flow equations exactly under any tried convention (best: max mismatch $(round(best.mis; sigdigits = 3)) pu). The convention with the smallest total mismatch is used; compare `conventions.trials`." maxlog = 1
-   end
-
    Y = sparse_output ? best.Y : Matrix(best.Y)
    return (
       name = mp.name,

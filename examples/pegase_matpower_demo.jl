@@ -6,8 +6,8 @@
 # Purpose:
 # Large-network integration example: a PEGASE case (default case2869pegase,
 # 2869 buses, 509 PV buses, transformers with ratio and phase shift) read from
-# a MATPOWER case file, solved with the sparse direct PV kernel and compared
-# with the solved state stored in the file. The case file is downloaded from
+# a MATPOWER case file (MATPOWER conventions) and solved with the sparse
+# direct PV kernel. The case file is downloaded from
 # the MATPOWER repository into data/_downloaded/ (git-ignored) when missing.
 # Run with: julia --project=. examples/pegase_matpower_demo.jl [--case=case2869pegase|case1354pegase|path.m]
 #           [--order=40] [--qlimits] [--polish] [--germ=deviation|noload]
@@ -87,14 +87,11 @@ function main(args = ARGS)
    println("="^88)
    println("APSLF on a MATPOWER case: ", basename(path))
    println("="^88)
-   t_import = @elapsed case = matpower_case(path; verbose = 1)
-   conv = case.conventions
+   t_import = @elapsed case = matpower_case(path)   # MATPOWER conventions
    @printf("\nimport: %d buses, %d branches, %d PV buses, %d bus shunts, %.2f s\n", size(case.Y, 1), length(case.branches), count(==(:pv), case.bustype), length(case.bus_shunts), t_import)
    npst = count(A.is_phase_shifter, case.branches)
    ntr = count(A.is_transformer, case.branches)
    @printf("transformers: %d with off-nominal ratio or shift, %d of them phase shifters\n", ntr, npst)
-   @printf("conventions chosen from the stored solution: angle in %s, sign %+d, ratio %s (max mismatch of the stored state %.2e pu, L1 %.2e pu)\n",
-      conv.angle_unit, conv.angle_sign, conv.ratio_convention, conv.ref_mismatch_pu, conv.ref_mismatch_l1_pu)
    if npst > 0
       shifts = [b.shift_deg for b in case.branches if A.is_phase_shifter(b)]
       @printf("phase-shift angles after conversion: %d values in [%.2f°, %.2f°]\n", length(shifts), minimum(shifts), maximum(shifts))
@@ -102,7 +99,7 @@ function main(args = ARGS)
 
    println("\nsolver: mode = :direct (sparse direct PV kernel), order = $(opts.order), Padé, germ = :$(opts.germ), NR polish = $(opts.polish), Q limits = $(opts.qlimits)")
    # first call includes compilation; time the second one
-   solve() = solve_pf_apslf(case; mode = :direct, order = opts.order, use_pade = true, nr_polish = opts.polish, enforce_q_limits = opts.qlimits, germ = opts.germ, return_coeffs = true)
+   solve() = solve_pf_apslf(case; mode = :direct, order = opts.order, nr_polish = opts.polish, enforce_q_limits = opts.qlimits, germ = opts.germ, return_coeffs = true)
    res = solve()
    t_solve = @elapsed res = solve()
    maxP, maxQ = A.compute_demo_mismatch(case, res)
@@ -112,10 +109,6 @@ function main(args = ARGS)
    nsw = length(get(res, :switch_log, ()))
    opts.qlimits && @printf("PV→PQ switches due to Q limits: %d\n", nsw)
 
-   dV = abs.(res.V .- case.V_ref)
-   k = argmax(dV)
-   @printf("\ncomparison with the solved state stored in the case file:\n  max |V - V_ref| = %.2e pu at bus %s, mean = %.2e pu\n", dV[k], case.labels[k], sum(dV) / length(dV))
-   println("  (the stored state itself violates the equations by up to $(round(conv.ref_mismatch_pu; sigdigits = 2)) pu, largest at two PST terminals; agreement to that level is expected)")
 
    Vcoeff = get(res, :Vcoeff, nothing)
    if Vcoeff !== nothing

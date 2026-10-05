@@ -208,7 +208,7 @@ AnalyticLoadFlow/
 | `src/solver_core.jl` | APSLF core, Taylor/Padé evaluation, PQ/PV handling, Q limits, and NR polish |
 | `src/demo_cases.jl` | Reusable case builders and demo wrappers for examples and tests |
 | `src/transformers.jl` | Branch model with ratio and phase shift, `build_ybus` (dense/sparse), branch flows, 9-bus PST case, regulated PST loop |
-| `src/matpower_import.jl` | MATPOWER `.m` reader with transformer convention detection |
+| `src/matpower_import.jl` | MATPOWER `.m` reader (MATPOWER conventions) |
 | `src/utils.jl` | Formatting, mismatch, stability, and logging helpers as well as tiled-grid builders |
 | `src/line_flows.jl` | Branch power flows and aggregated line losses |
 | `src/yamlparams.jl` | Helpers for parameter processing in configured runs |
@@ -324,7 +324,7 @@ flowchart TD
 | Parametric tiled grid | included | configurable bus count and timing measurement |
 | CGMES import | not included | no external import workflow |
 | Transformers and phase shifters | supported | complex tap, both embeddings of theory Section 6.5, regulated PST outer loop |
-| MATPOWER import | included | angle unit/sign and ratio convention detected from the stored solution |
+| MATPOWER import | included | MATPOWER conventions (angle in degrees, tap on the from side) |
 | Transformer tap/OLTC control | not included | no industrial control logic |
 | GUI, web API, or service | not included | pure Julia library plus console examples |
 | Formal benchmark suite | not included | timing demo and smoke tests are not a benchmark commitment |
