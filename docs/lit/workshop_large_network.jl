@@ -81,30 +81,61 @@ mp = parse_matpower_m(path)
 # convention is stamped into a Y-bus, and the one that reproduces the stored
 # `(Vm, Va)` with the smallest total power mismatch wins.
 
-case = matpower_case(path)
+case = with_silent(() -> matpower_case(path))   # its warning about the stored state is discussed below
 conv = case.conventions
+chosen = (conv.angle_unit, conv.angle_sign, conv.ratio_convention)
 println("angle | sign | ratio     | max mismatch | L1 mismatch of the stored state")
 for t in conv.trials
-   @printf("%-5s | %+d   | %-9s | %10.2e   | %10.2e %s\n", t.angle_unit, t.angle_sign, t.ratio_convention, t.ref_mismatch_pu, t.ref_mismatch_l1_pu,
-      (t.angle_unit, t.angle_sign, t.ratio_convention) == (conv.angle_unit, conv.angle_sign, conv.ratio_convention) ? "<- chosen" : "")
+   mark = (t.angle_unit, t.angle_sign, t.ratio_convention) == chosen ? "  <- chosen" : ""
+   @printf("%-5s | %+d   | %-9s | %10.2e   | %10.2e%s\n", t.angle_unit, t.angle_sign, t.ratio_convention, t.ref_mismatch_pu, t.ref_mismatch_l1_pu, mark)
 end
-shifts = [b.shift_deg for b in case.branches if A.is_phase_shifter(b)]
-@printf("\n%d buses, %d branches, %d PV buses, %d transformers, %d phase shifters with angles in [%.1f°, %.1f°]\n",
-   size(case.Y, 1), length(case.branches), count(==(:pv), case.bustype), count(A.is_transformer, case.branches), length(shifts), minimum(shifts), maximum(shifts))
 
-# The remaining mismatch of the stored state (about 0.5 pu at the PST buses)
-# is a property of the file, not of the import: the stored voltages were not
-# produced with exactly this branch model.
+# Radians with the opposite sign win by two orders of magnitude. The network
+# at a glance:
+
+nbus = size(case.Y, 1)
+shifts = [b.shift_deg for b in case.branches if A.is_phase_shifter(b)]
+@printf("%d buses, %d branches, %d PV buses\n", nbus, length(case.branches), count(==(:pv), case.bustype))
+@printf("%d transformers, %d of them phase shifters (angles from %.1f° to %.1f°)\n",
+   count(A.is_transformer, case.branches), length(shifts), minimum(shifts), maximum(shifts))
+@assert chosen == (:rad, -1, :matpower) && length(shifts) == 12   #src
+
+# Even the chosen convention leaves a residual of 0.5 pu. Where does it sit?
+# The per-bus mismatch of the stored state on the imported Y-bus (P at every
+# non-slack bus, Q at PQ buses):
+
+Sref = A.calc_injections(case.Y, case.V_ref)
+mis = [k == case.slack ? 0.0 :
+       max(abs(real(Sref[k]) - case.Pspec[k]), case.bustype[k] == :pq ? abs(imag(Sref[k]) - case.Qspec[k]) : 0.0)
+       for k = 1:nbus]
+pst_buses = Set(Iterators.flatten((b.i, b.j) for b in case.branches if A.is_phase_shifter(b)))
+for k in sortperm(mis, rev = true)[1:3]
+   @printf("bus %-5s mismatch %.3f pu %s\n", case.labels[k], mis[k], k in pst_buses ? "(PST terminal)" : "")
+end
+@printf("%d buses above 1e-3 pu, %d of them PST terminals (%d PST terminals in total)\n",
+   count(>(1e-3), mis), count(k -> mis[k] > 1e-3 && k in pst_buses, 1:nbus), length(pst_buses))
+@assert sort(findall(>(0.1), mis)) == sort([k for k in pst_buses if mis[k] > 0.1]) && count(>(0.1), mis) == 2   #src
+
+# The large residual sits at two of the 24 PST terminals (0.51 pu at bus 58,
+# 0.11 pu at bus 6153); about two hundred other buses carry between 1e-3 and
+# 1e-2 pu. This is a property of the file, not of the import: the stored
+# voltages were not produced with exactly this branch model. The solver below
+# does not use them; they only serve for the convention check and for the
+# comparison at the end of Section 3.
 
 # ## 3. Solving
 #
 # `Y` is sparse, and so is the whole solver: no conversion is needed. The
 # default embedding (`germ = :deviation`) keeps the flat germ and ramps bus
-# shunts and transformer deviations up with $s$. No Newton polish is needed.
+# shunts and transformer deviations up with $s$. The series is evaluated at
+# $s = 1$ with Padé approximants; no Newton polish is needed. (The plain
+# Taylor sum of the same 40 terms would stop at a mismatch of about 2e-8 pu
+# here, just above the 1e-8 tolerance.)
 
 res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
 t = @elapsed res = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = false, return_coeffs = true)
 @printf("converged = %s, mode = %s, outer iterations = %d, %.3f s\n", res.converged, res.effective_mode, res.outer_iters, t)
+@assert res.converged && res.outer_iters == 1 && mismatch(case, res) < 1e-8   #src
 @printf("max mismatch on the physical Y-bus = %.1e pu,  |V| in [%.4f, %.4f] pu\n", mismatch(case, res), minimum(abs.(res.V)), maximum(abs.(res.V)))
 dV = abs.(res.V .- case.V_ref)
 @printf("distance to the stored state: max %.1e pu (bus %s), mean %.1e pu\n", maximum(dV), case.labels[argmax(dV)], sum(dV) / length(dV))
@@ -115,14 +146,22 @@ dV = abs.(res.V .- case.V_ref)
 # series converges at $s = 1$. On a large meshed network they behave very
 # differently. The no-load state of PEGASE, with all loads switched off, is
 # far from the operating point (Ferranti rise on long lightly loaded lines),
-# so the `:noload` path has a Padé pole inside the unit circle and the series
-# diverges. The `:deviation` path starts at 1 pu everywhere and converges.
+# so the `:noload` path has a singularity close to $s = 0$ and the series
+# diverges at $s = 1$. The `:deviation` path starts at 1 pu everywhere and
+# converges. This is why `:deviation` is the default and the supported germ;
+# `:noload` is experimental.
+#
+# The coefficients show it directly. `stability_from_Vcoeff` estimates the
+# radius of convergence by the root test $|V^{(k)}|^{-1/k}$ over the last
+# orders (above 1 the series converges at $s = 1$, below 1 it does not) and
+# rates the case RED when it is below 1.
 
 for germ in (:deviation, :noload)
    V, _, Vc, _, _ = A.apslf_pf_pv_direct(case.Y, case.bustype, case.Pspec, case.Qspec, case.Vm; slack = case.slack, Vslack = ComplexF64(case.Vm[case.slack], 0), order = 40, self_check = false, germ = germ)
    st = A.stability_from_Vcoeff(Vc; slack = case.slack, order = 40)
-   @printf("germ = %-10s |V^(0)| max = %.2f   |V^(10)| max = %.1e   |V^(40)| max = %.1e   pole distance %.3f (%s)\n",
-      germ, maximum(abs.(Vc[:, 1])), maximum(abs.(Vc[:, 11])), maximum(abs.(Vc[:, 41])), st.dmin, A.st_level(st.dmin))
+   @printf("germ = %-10s |V^(0)| max = %.2f   |V^(10)| max = %.1e   |V^(40)| max = %.1e   radius ≈ %.3f   %s\n",
+      germ, maximum(abs.(Vc[:, 1])), maximum(abs.(Vc[:, 11])), maximum(abs.(Vc[:, 41])), st.radius, A.st_level(st))
+   @assert (germ == :deviation) == (st.radius > 1) && (A.st_level(st) == "RED") == (germ == :noload)   #src
 end
 
 # ## 5. Reactive limits
@@ -134,6 +173,7 @@ end
 res_q = solve_pf_apslf(case; order = 40, nr_polish = false, enforce_q_limits = true)
 sw = get(res_q, :switch_log, ())
 @printf("converged = %s, outer iterations = %d, PV→PQ switches = %d, max mismatch = %.1e pu\n", res_q.converged, res_q.outer_iters, length(sw), mismatch(case, res_q))
+@assert res_q.converged && mismatch(case, res_q) < 1e-8   #src
 nmax = count(e -> e.side == :max, sw)
 @printf("switched at Qmax: %d, at Qmin: %d\n", nmax, length(sw) - nmax)
 

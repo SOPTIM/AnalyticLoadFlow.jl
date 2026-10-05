@@ -92,14 +92,14 @@ function demo_case_9bus()
 end
 
 """
-    solve_demo_case(case; inner=:pq, order=40, use_pade=true, nr_polish=true,
+    solve_demo_case(case; inner=:direct_pv, order=40, nr_polish=true,
                     verbose=0, max_outer=20, return_coeffs=true, germ=:deviation, kwargs...)
 
 Call APSLF for a case NamedTuple that follows the demo data contract.
 """
 function solve_demo_case(
    case;
-   inner::Symbol = :pq,
+   inner::Symbol = :direct_pv,
    order::Int = 40,
    use_pade::Bool = true,
    nr_polish::Bool = true,

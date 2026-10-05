@@ -26,6 +26,9 @@
 
 using Pkg
 Pkg.activate(@__DIR__)
+# A fresh depot (CI without a cache hit) has no registry, and Pkg.resolve does
+# not install one on its own.
+isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General")
 Pkg.resolve()
 Pkg.instantiate()
 

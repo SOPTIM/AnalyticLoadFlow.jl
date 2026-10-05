@@ -115,7 +115,7 @@ function main(args = ARGS)
    dV = abs.(res.V .- case.V_ref)
    k = argmax(dV)
    @printf("\ncomparison with the solved state stored in the case file:\n  max |V - V_ref| = %.2e pu at bus %s, mean = %.2e pu\n", dV[k], case.labels[k], sum(dV) / length(dV))
-   println("  (the stored state itself violates the equations by up to $(round(conv.ref_mismatch_pu; sigdigits = 2)) pu at the PST buses, so agreement to that level is expected)")
+   println("  (the stored state itself violates the equations by up to $(round(conv.ref_mismatch_pu; sigdigits = 2)) pu, largest at two PST terminals; agreement to that level is expected)")
 
    Vcoeff = get(res, :Vcoeff, nothing)
    if Vcoeff !== nothing
@@ -123,7 +123,7 @@ function main(args = ARGS)
       nrm = [maximum(abs.(Vcoeff[:, n+1])) for n = 0:opts.order]
       println("\nseries diagnostics:")
       @printf("  max |V^(n)| for n = 1, 5, 10, 20, %d: %.1e, %.1e, %.1e, %.1e, %.1e\n", opts.order, nrm[2], nrm[6], nrm[11], nrm[21], nrm[end])
-      @printf("  nearest Padé pole to s = 1: distance %.3f at bus %s (%s)\n", st.dmin, case.labels[st.bus], A.st_level(st.dmin))
+      @printf("  nearest Padé pole to s = 1: distance %.3f at bus %s, radius of convergence %.2f (%s)\n", st.dmin, case.labels[st.bus], st.radius, A.st_level(st))
    end
    return nothing
 end

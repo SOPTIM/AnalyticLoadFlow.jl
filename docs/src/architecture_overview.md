@@ -311,11 +311,11 @@ flowchart TD
 | Feature | Status | Classification |
 |---|---|---|
 | PQ load flow | supported | APSLF PQ core |
-| PV buses | supported | outer-loop PV handling and direct PV core |
+| PV buses | supported | direct PV core (default); outer-loop PV handling is experimental |
 | Q limits | supported with limitations | PV→PQ switching when `Qmin` or `Qmax` is violated |
 | NR polish | optional | rectangular Newton method as post-processing |
-| Taylor evaluation | supported | direct evaluation of the series solution |
-| Padé evaluation | supported | rational continuation of the series solution |
+| Taylor evaluation | experimental | `evaluate_series` with `mode = :taylor`; the solver always uses Padé |
+| Padé evaluation | supported | rational continuation of the series solution; the solver's only evaluation |
 | Sparse Y-bus | supported | the solver is sparse only; a dense `Y` is converted once on entry |
 | Line flows | supported | PI line flows and loss sums |
 | 9-bus teaching case | included | PV, PQ, and Q-limit demonstration |

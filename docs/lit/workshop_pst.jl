@@ -92,6 +92,7 @@ Y0 = pst_case.Y0
 I0 = Y * ones(9)                                    # current at the flat state
 @printf("flat state, full Y : |I| at bus 4 = %.4f, bus 5 = %.4f, bus 6 = %.4f pu\n", abs(I0[4]), abs(I0[5]), abs(I0[6]))
 @printf("flat state, Y0     : max |I| = %.1e pu   (zero row sums)\n", maximum(abs.(Y0 * ones(9))))
+@assert maximum(abs.(Y0 * ones(9))) < 1e-12 && abs(I0[4]) > 1   #src
 @printf("symmetry: Y[4,5] = %s,  Y[5,4] = %s\n", pol(Y[4, 5]), pol(Y[5, 4]))
 
 # ## 3. The two embeddings by hand
@@ -146,6 +147,7 @@ end
 Vdev = [Vslack; evaluate(V1[red, :])]
 Sdev = Vdev .* conj.(Y4 * Vdev)
 @printf("variant 1: max |S - S_spec| at buses 2-4 = %.2e pu\n", maximum(abs.(Sdev[red] .- S4[red])))
+@assert maximum(abs.(Sdev[red] .- S4[red])) < 1e-12   #src
 
 # **Variant 2, no-load germ.** Constant matrix is the full $Y$; the germ is the
 # solution of the linear no-load problem, and the recursion of Section 4 runs
@@ -167,8 +169,10 @@ end
 Vnl = [Vslack; evaluate(V2)]
 Snl = Vnl .* conj.(Y4 * Vnl)
 @printf("variant 2: max |S - S_spec| at buses 2-4 = %.2e pu\n", maximum(abs.(Snl[red] .- S4[red])))
+@assert maximum(abs.(Snl[red] .- S4[red])) < 1e-12   #src
 println("no-load germ: ", join([pol(v) for v in V2[:, 1]], ",  "))
 @printf("both variants, same function at s = 1: max |V_dev - V_noload| = %.1e\n", maximum(abs.(Vdev .- Vnl)))
+@assert maximum(abs.(Vdev .- Vnl)) < 1e-12   #src
 
 # The coefficient paths differ although the limits agree. Theory Section 6.5:
 # the two embeddings have different convergence radii.
@@ -178,14 +182,16 @@ for n in (1, 2, 5, 10, 20, 30)
 end
 
 # The package does the same through the `germ` keyword. Its `:deviation`
-# variant uses $Y_0 = Y - \mathrm{diag}(Y\mathbf{1})$, which has zero row sums
-# for any $Y$ and makes the deviation a diagonal matrix; the result is the
-# same solution.
+# variant (the default and the supported one) uses
+# $Y_0 = Y - \mathrm{diag}(Y\mathbf{1})$, which has zero row sums for any $Y$
+# and makes the deviation a diagonal matrix; the result is the same
+# solution. `:noload` (variant 2) is available as an experimental option.
 
 case4 = (Y = Y4, bustype = [:slack, :pq, :pq, :pq], Pspec = real.(S4), Qspec = imag.(S4), Vm = ones(4), Qmin = fill(-1e9, 4), Qmax = fill(1e9, 4), slack = 1)
 for germ in (:deviation, :noload)
    r = solve_pf_apslf(case4; order = order, nr_polish = false, germ = germ)
    @printf("solve_pf_apslf germ = %-10s max |V - V_hand| = %.1e\n", germ, maximum(abs.(r.V .- Vdev)))
+   @assert r.converged && maximum(abs.(r.V .- Vdev)) < 1e-12   #src
 end
 
 # ## 4. Angle sweep on the 9-bus ring
@@ -202,6 +208,7 @@ for φ in -20.0:5.0:20.0
    p45 = branch_active_power(r.V, c.branches, 4, 5) * c.baseMVA
    p49 = branch_active_power(r.V, c.branches, 4, 9) * c.baseMVA
    @printf("%6.1f  %10.3f  %10.3f  %10.3f  %10.4f  %8.4f  %8.4f\n", φ, p45, p49, p45 + p49, sum(f.Ploss_MW for f in fl), minimum(abs.(r.V)), maximum(abs.(r.V)))
+   @assert r.converged && mismatch(c, r) < 1e-8   #src
 end
 
 # The ratio tap does the other job. Lowering the tap at bus 4 raises the
@@ -212,6 +219,7 @@ for a in (0.95, 1.0, 1.05)
    c = demo_case_9bus_pst(ratio = a, enforce_q_limits = false)
    r = solve_pf_apslf(c; order = 40, nr_polish = false)
    @printf("%.2f   %.4f   %.4f   %8.3f\n", a, abs(r.V[5]), abs(r.V[9]), branch_active_power(r.V, c.branches, 4, 5) * c.baseMVA)
+   @assert r.converged && mismatch(c, r) < 1e-8   #src
 end
 
 # ## 5. A regulated phase shifter
@@ -226,11 +234,13 @@ end
 
 reg = solve_pf_pst_regulated(φ -> demo_case_9bus_pst(shift_deg = φ, enforce_q_limits = false), 4, 5, 0.6; order = 40, nr_polish = false, verbose = 1)
 @printf("\nshift = %.4f°  P_45 = %.6f pu  converged = %s  APSLF solves = %d\n", reg.shift_deg, reg.P_pu, reg.converged, length(reg.history))
+@assert reg.converged && abs(reg.P_pu - 0.6) < 1e-5   #src
 
 # Angle limits pin the result and report `converged = false`:
 
 pinned = solve_pf_pst_regulated(φ -> demo_case_9bus_pst(shift_deg = φ, enforce_q_limits = false), 4, 5, 0.6; shift_min = -3.0, shift_max = 3.0, order = 40, nr_polish = false)
 @printf("with limits ±3°: shift = %.2f°, P_45 = %.4f pu, converged = %s\n", pinned.shift_deg, pinned.P_pu, pinned.converged)
+@assert !pinned.converged && pinned.shift_deg == -3.0   #src
 
 # ## 6. Sparse Y with transformers
 #
@@ -241,3 +251,4 @@ pinned = solve_pf_pst_regulated(φ -> demo_case_9bus_pst(shift_deg = φ, enforce
 c = demo_case_9bus_pst(shift_deg = 12.0, sparse_output = true)
 r = solve_pf_apslf(c; order = 40, nr_polish = false)
 @printf("sparse PST case: Y is %s, converged = %s, max mismatch = %.1e pu\n", typeof(c.Y).name.name, r.converged, mismatch(c, r))
+@assert r.converged && mismatch(c, r) < 1e-10   #src

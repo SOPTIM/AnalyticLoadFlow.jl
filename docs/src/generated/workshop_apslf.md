@@ -224,8 +224,8 @@ keyword offers three ways to deal with it
 
 | germ | Order-0 state $V^{(0)}$ | Where the capacitor goes | Exact at $s=0$? |
 |:--|:--|:--|:--|
-| `:flat` | 1 at every bus | stays in the constant matrix | no (legacy behaviour before 0.9.15) |
-| `:noload` | no-load voltage, solution of the linear network without loads | stays in the constant matrix | yes (Section 6.5, variant 2) |
+| `:flat` | 1 at every bus | stays in the constant matrix | no (legacy behaviour before 0.9.15; experimental) |
+| `:noload` | no-load voltage, solution of the linear network without loads | stays in the constant matrix | yes (Section 6.5, variant 2; experimental) |
 | `:deviation` | 1 at every bus | moved to the right-hand side, ramped with $s$ | yes (Section 6.5, variant 1; the split of Section 7.10; default) |
 
 The next cell runs all three on the two-bus network and prints the germ,
@@ -475,12 +475,14 @@ end
 
 The keywords below are the ones you will touch most often:
 
-- `mode`: how PV buses are handled, `:direct` (augmented real system per
-  order) or `:outer` (repeated PQ solves), see Section 7.
+- `mode`: how PV buses are handled, `:direct` (default, augmented real
+  system per order) or `:outer` (repeated PQ solves, experimental), see
+  Section 7.
 - `order`: number of series coefficients. 40 is generous for a small case.
-- `use_pade`: evaluate the series at $s = 1$ with a Padé approximant.
 - `nr_polish`: a few Newton-Raphson steps **after** the series. Switched
   off here on purpose: everything you see is the pure series result.
+
+The series is always evaluated at $s = 1$ with a Padé approximant.
 
 The result is a NamedTuple. The fields used in this notebook:
 
@@ -489,7 +491,7 @@ The result is a NamedTuple. The fields used in this notebook:
 | `V` | complex bus voltages at $s = 1$ |
 | `Q` | reactive injections; at PV buses the value the solver found |
 | `bustype` | bus types *after* limit switching (a limited PV bus shows up as `:pq`) |
-| `converged` | the series evaluation succeeded (says nothing about the physics, see Section 6) |
+| `converged` | the power mismatch on the physical Y-bus is below the tolerance (1e-8 pu) and no limit switch is pending |
 | `effective_mode` | the PV mode actually used |
 | `outer_iters` | number of outer passes (limit switching needs at least two) |
 | `switch_log` | one entry per PV→PQ switch |
@@ -498,9 +500,8 @@ The result is a NamedTuple. The fields used in this notebook:
 ````@example workshop_apslf
 # mode = :direct   → PV buses via the augmented real system per order (Section 6.3)
 # order = 40       → 40 series coefficients per bus
-# use_pade = true  → Padé evaluation at s = 1
 # nr_polish = false → no Newton step afterwards: pure series result
-res = solve_pf_apslf(case; mode = :direct, order = 40, use_pade = true, nr_polish = false)
+res = solve_pf_apslf(case; mode = :direct, order = 40, nr_polish = false)
 
 println("converged = $(res.converged), effective mode = $(res.effective_mode), outer iterations = $(res.outer_iters)")
 ````
@@ -573,14 +574,22 @@ How many orders **are** needed? The truncation error of the Taylor sum is
 roughly the size of the first omitted coefficient. With a factor 2.5 per
 order, $10^{-10}$ takes about 25 orders and machine precision about 40.
 The Padé evaluation gets there earlier, because the rational function
-extrapolates the tail of the series. The next cell solves the case with
-increasing order and prints the mismatch for both evaluations.
+extrapolates the tail of the series. The solver always evaluates with
+Padé; to see the difference, the next cell takes the coefficients of the
+solve above, cuts the series after `o` orders and evaluates every bus both
+ways with `evaluate_series`, then prints the mismatch of each voltage
+vector.
 
 ````@example workshop_apslf
+function evaluate_buses(res, o, mode)
+   opts = A.APSLFEvaluationOptions(mode = mode)
+   return [i == case.slack ? res.V[i] : A.evaluate_series(res.Vcoeff[i, 1:o+1], opts).voltage for i in eachindex(res.V)]
+end
+
 println("order   mismatch Taylor   mismatch Padé")
 for o in (5, 10, 15, 20, 30, 40)
-   rt = solve_pf_apslf(case; order = o, nr_polish = false, use_pade = false)   # plain sum
-   rpd = solve_pf_apslf(case; order = o, nr_polish = false, use_pade = true)   # Padé
+   rt = merge(res, (V = evaluate_buses(res, o, :taylor),))   # plain sum of o + 1 terms
+   rpd = merge(res, (V = evaluate_buses(res, o, :pade),))    # Padé approximant of the same terms
    @printf("  %2d      %.1e          %.1e\n", o, mismatch(case, rt), mismatch(case, rpd))
 end
 ````
@@ -593,13 +602,14 @@ advantage of Padé grows.
 #### Taylor vs Padé
 
 `evaluate_series(coeffs, options)` evaluates the series of **one** bus at
-$s = 1$. `APSLFEvaluationOptions(mode = :taylor)` sums the polynomial;
+$s = 1$ (a tool for experiments; the solver itself always uses Padé).
+`APSLFEvaluationOptions(mode = :taylor)` sums the polynomial;
 `mode = :pade` turns the polynomial into a rational function, the Padé
 approximant of
 [Section 5.2](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#52-padé-approximation-from-series-to-quotient).
 A rational function can represent the voltage **beyond** the convergence
 radius of the polynomial (analytic continuation), which is why the
-solver uses Padé by default. On this easy case both must agree.
+solver always uses it. On this easy case both must agree.
 
 ````@example workshop_apslf
 c5 = Vcoef[5, :]                                 # the 41 coefficients of bus 5 (a load bus)
@@ -616,27 +626,38 @@ true voltage function, and the nearest singularity is where the load
 flow ceases to exist (the "nose" of the PV curve). Its distance to
 $s = 1$ is therefore a heuristic margin to collapse
 ([Section 5.3](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#53-properties-and-practical-use)).
-`stability_from_Vcoeff` computes it from the coefficient matrix and
-returns `dmin` (that distance) and the pole; `st_level` maps `dmin` to a
-traffic light: GRN above 0.3, YEL above 0.1, RED below.
+`stability_from_Vcoeff` computes it from the coefficient matrix. It
+returns `dmin` (that distance), the pole, and `radius`, the root-test
+estimate $\min_k |V^{(k)}|^{-1/k}$ of the convergence radius over the last
+orders (above 1: the series converges at $s = 1$). Before the Padé step
+each series is cut where its coefficients reach rounding level, and poles
+paired with a zero of the numerator (spurious pole-zero doublets) are
+dropped. `st_level(st)` turns the result into a traffic light: RED if the
+radius is below 1, otherwise by distance, GRN above 0.3, YEL above 0.1,
+RED below.
 
 The experiment: scale all injections by a factor and watch the nearest
-pole move towards $s = 1$. Two observations: the distance shrinks as the
-loading grows, and at factor 2 the load flow already has no solution
-while the level is still GRN. The indicator is a heuristic margin, not a
-certificate; read it as a trend, together with `converged` and the
-mismatch.
+pole.
 
 ````@example workshop_apslf
-println("load factor  converged   min |V|   pole distance   level")
-for factor in (1.0, 1.5, 2.0, 2.5)
+println("load factor  converged   min |V|   nearest pole        distance  radius  level")
+for factor in (1.0, 1.5, 2.0, 2.5, 3.0)
    # same case, all injections scaled; reactive limits switched off so only the loading changes
    heavy = merge(case, (Pspec = factor .* case.Pspec, Qspec = factor .* case.Qspec, Qmin = fill(-1e9, 9), Qmax = fill(1e9, 9)))
    rh = solve_pf_apslf(heavy; order = 40, nr_polish = false, return_coeffs = true)
    st = A.stability_from_Vcoeff(rh.Vcoeff; slack = 1, order = 40)   # st.dmin = distance of the nearest pole to s = 1
-   @printf("   × %.1f      %-9s   %.4f    %.3f           %s\n", factor, rh.converged, minimum(abs.(rh.V)), st.dmin, A.st_level(st.dmin))
+   @printf("   × %.1f      %-9s   %.4f    %6.3f %+6.3fim    %.3f     %.2f    %s\n", factor, rh.converged, minimum(abs.(rh.V)),
+      real(st.pole), imag(st.pole), st.dmin, st.radius, A.st_level(st))
 end
 ````
+
+What the table shows: the nearest pole sits on the real axis and moves
+towards $s = 1$ as the loading grows, and the radius estimate falls with
+it. At factor 3 the pole is practically at $s = 1$ and the load flow has
+no solution any more (a Newton solve from the same point fails as well).
+
+The pole distance is a heuristic margin, not a certificate. Read it as a
+trend, together with `converged` and the mismatch.
 
 ### 6. The germ on the 9-bus case
 
@@ -650,25 +671,23 @@ Section 4) and the slack at 1.04 pu instead of 1.
 
 - `:deviation` (default): flat germ at the slack voltage, row sums ramped
   with $s$ (variant 1 of Section 6.5).
-- `:noload`: start from the no-load voltages (variant 2).
-- `:flat`: the plain flat germ on the full `Y`, the behaviour before
-  0.9.15. Not exact here.
+- `:noload` (experimental): start from the no-load voltages (variant 2).
+- `:flat` (experimental): the plain flat germ on the full `Y`, the
+  behaviour before 0.9.15. Not exact here.
 
-What the experiment shows: read `converged` and the mismatch
-**together**. `converged` only reports that the series evaluation
-succeeded, that the coefficients decayed and the Padé approximant could
-be built. It says nothing about whether the result solves the network.
-With the flat germ the series does converge, but to the solution of a
-**different** problem (the one whose $s = 0$ state is $V = 1$), and that
-state is 0.6 pu away from the load flow, with a bus at 0.27 pu. Only the
-mismatch reveals it.
+What the experiment shows: with the flat germ the series converges, but
+to the solution of a **different** problem (the one whose $s = 0$ state
+is $V = 1$). The result does not satisfy the power-flow equations of this
+network, the mismatch is large, and the solver reports
+`converged = false`. `converged` is only true when the power mismatch on
+the physical Y-bus is below the tolerance (`mis_tol_p`, `mis_tol_q`,
+default 1e-8 pu).
 
-Which germ to use: keep the default `:deviation`. It is exact for any
-`Y`, keeps the germ at nominal voltage and usually has the larger
-convergence radius. `:noload` is the alternative to try when a case with
-strong shunts or transformers does not converge with the default.
-`:flat` exists to reproduce results of versions before 0.9.15; do not use
-it for new work.
+Which germ to use: the default `:deviation`, the supported one. It is
+exact for any `Y`, keeps the germ at nominal voltage and usually has the
+larger convergence radius. `:noload` and `:flat` are experimental:
+`:noload` for comparisons (it diverges on large networks, see the PEGASE
+notebook), `:flat` only to reproduce results of versions before 0.9.15.
 
 ````@example workshop_apslf
 println("germ        converged   max mismatch (pu)   min |V| (pu)")
@@ -715,11 +734,12 @@ absorption the voltage rises.
 Two ways to handle PV buses
 ([Section 6](https://github.com/SOPTIM/AnalyticLoadFlow.jl/blob/main/docs/src/theorie-eng.md#6-practical-treatment-of-pv-buses)):
 
-- **`mode = :direct`**: $Q$ of the PV buses is an unknown of the series
-  itself; per order one augmented real linear system (Section 6.3).
-- **`mode = :outer`**: every PV bus is treated as a PQ bus, and an outer
-  loop corrects its $Q$ from one series solve to the next until $|V|$
-  matches (Section 6.2).
+- **`mode = :direct`** (default, the supported mode): $Q$ of the PV buses
+  is an unknown of the series itself; per order one augmented real linear
+  system (Section 6.3).
+- **`mode = :outer`** (experimental): every PV bus is treated as a PQ bus,
+  and an outer loop corrects its $Q$ from one series solve to the next
+  until $|V|$ matches (Section 6.2).
 
 Both end at the same solution and both switch bus 3. The $Q$ recorded in
 the switch log differs, because it is the value **at the moment of the

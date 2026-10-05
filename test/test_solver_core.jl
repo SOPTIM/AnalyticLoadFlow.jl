@@ -195,6 +195,25 @@ _isfinite(z::Complex) = isfinite(real(z)) && isfinite(imag(z))
       @test st1.critical[1].distance ≈ st1.dmin
    end
 
+   @testset "stability_from_Vcoeff: no spurious poles, radius" begin
+      # Easy case: coefficients decay to rounding level long before order 40.
+      # Without the cut and the doublet filter a spurious pole at 0.89-0.10i
+      # rated it YEL.
+      case = AnalyticLoadFlow.demo_case_9bus()
+      r = AnalyticLoadFlow.solve_pf_apslf(case; order = 40, nr_polish = false, return_coeffs = true)
+      st = AnalyticLoadFlow.stability_from_Vcoeff(r.Vcoeff; slack = 1, order = 40)
+      @test st.dmin > 1.0
+      @test st.radius > 1.0
+      @test AnalyticLoadFlow.st_level(st) == "GRN"
+
+      # A divergent series (c_k = 2^k, radius 1/2) is RED whatever the poles say.
+      Vdiv = ComplexF64[i == 1 ? (k == 0 ? 1.0 : 0.0) : 2.0^k for i = 1:2, k = 0:20]
+      sd = AnalyticLoadFlow.stability_from_Vcoeff(Vdiv; slack = 1, order = 20)
+      @test sd.radius ≈ 0.5 atol = 1e-12
+      @test sd.level == "RED"
+      @test AnalyticLoadFlow.st_level(sd) == "RED"
+   end
+
    @testset "apslf_pq Tests" begin
       @testset "Simple 2-bus system" begin
          Y = [2.0-1.0im -1.0+0.5im; -1.0+0.5im 1.5-0.8im]
