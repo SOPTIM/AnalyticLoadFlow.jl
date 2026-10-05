@@ -1,5 +1,15 @@
 # Changelog
 
+## Version 0.10.0
+
+### Added
+- Transformer branches with ratio and phase shift (PST): `pi_branch`, `transformer_branch`, `build_ybus` (dense or sparse), `branch_flows`, `branch_active_power`, `print_branch_flows`, the 9-bus PST case `demo_case_9bus_pst` and `solve_pf_pst_regulated`, an outer secant loop on the angle of a regulated phase shifter (theory Section 6.5). A fixed shift is exact with the default `germ = :deviation`.
+- MATPOWER case reader (`parse_matpower_m`, `matpower_case`) that detects the angle unit, the angle sign and the ratio convention from the stored solution; PEGASE 2869 example.
+- Notebooks "Transformers and PST" and "Large network (PEGASE)".
+
+### Changed
+- Precompile and first call take about half the time: the solver compiles only the path a solve takes (dense or sparse matrix, inner kernel, germ variant, debug and report output) instead of every branch, and the Padé and Newton steps call `lu` instead of the `\` polyalgorithm. Run times and results are unchanged on the test and benchmark cases.
+
 ## Version 0.9.16
 
 ### Changed
