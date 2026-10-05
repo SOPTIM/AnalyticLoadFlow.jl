@@ -1,50 +1,25 @@
 # Changelog
 
 ## Version 0.10.0
-
-### Added
-- Transformers and phase shifters, regulated PST.
-- MATPOWER reader.
-- Notebooks "Transformers and PST" and "Large network (PEGASE)".
-- Notebook test in CI.
-
-### Changed
-- Sparse only.
-- Padé only.
-- Direct mode is the default.
-- Outer mode, Taylor evaluation, `:noload` and `:flat` are experimental.
-- `stability_from_Vcoeff`: new fields `radius` and `level`.
-- Faster precompile.
-
-### Fixed
-- Outer mode: `converged` checks the mismatch.
-- Direct-PV fallback result is used.
+- Transformers, phase shifters, regulated PST
+- MATPOWER reader
+- PST and PEGASE notebooks, notebook test
+- Sparse only, Padé only, direct mode as default
+- Experimental: outer mode, Taylor, `:noload`, `:flat`
+- Stability indicator with radius
+- Faster precompile
+- Fixes: outer-mode convergence, direct-PV fallback
 
 ## Version 0.9.16
-
-### Changed
-- Selectable precompile workload (`ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD`).
+- Selectable precompile workload
 
 ## Version 0.9.15
-
-### Added
-- Precompile workload.
-- `pv_secant_damping` for the outer PV loop.
-
-### Changed
-- Julia 1.12 and 1.13.
-
-### Fixed
-- PQ recursion uses `conj(W^(n-1))`.
-- Sign of the reactive-power unknown in the direct PV kernels.
-- Exact order-0 state with `germ = :deviation`.
+- Precompile workload
+- Julia 1.12 and 1.13
+- `pv_secant_damping`
+- Fixes: PQ recursion, PV sign, exact germ
 
 ## Version 0.9.14
-
-### Added
-- Demo helpers and console examples for Y-bus input.
-- Tiled-grid scaling example.
-
-### Fixed
-- CLI wording for synthetic cases.
-- Documenter warnings.
+- Y-bus demo examples
+- Tiled-grid scaling example
+- Fixes: CLI wording, Documenter warnings
