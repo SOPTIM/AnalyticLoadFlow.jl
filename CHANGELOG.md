@@ -1,5 +1,8 @@
 # Changelog
 
+## Version 0.10.1
+- Fixed: NR-polish autodamping test depended on round-off (FMA contraction on LLVM 23), see #20
+
 ## Version 0.10.0
 - Transformers, phase shifters, regulated PST
 - MATPOWER reader
