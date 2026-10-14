@@ -484,20 +484,19 @@ end
          [-1.0, -1.0],
          [1.0, 1.0];
          inner = :direct_pv,
-         order = 12,
+         order = 2,
          use_pade = true,
          nr_polish = true,
          nr_max_iter = 1,
-         nr_damping = 2.0,
+         nr_damping = 4.0,
          enforce_q_limits = false,
          max_outer = 1,
       )
+   # The polish must start from a non-converged candidate, see #20.
+   @test res_damped_polish.nr_polish_score_before > 1e-8
    @test res_damped_polish.nr_polish_rejected == false
    @test res_damped_polish.nr_polish_damped == true
-   # The APSLF solution is already exact (score ~1e-16), so the damped polish step
-   # cannot improve it; it must only not make it worse.
    @test res_damped_polish.nr_polish_score_after <= res_damped_polish.nr_polish_score_before
-   @test res_damped_polish.nr_polish_score_after < 1e-10
 
    res_no_acceptable_step = @test_logs (:warn, r"no damping factor") AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
