@@ -249,6 +249,18 @@ _radial_pst(shift_deg, z) = build_ybus(
       end
    end
 
+   # negative series resistance (MATPOWER data, also on a line parallel to a shifter): the
+   # inductive candidate has real(a) > 0, the row sums pick it instead of a near-180 degree ramp
+   z = -0.002 + 0.08im
+   V0 = solve(_radial_pst(0.0, z)).V
+   for φ in (10.0, 30.0)
+      Y = _radial_pst(φ, z)
+      res = solve(Y)
+      @test res.shift_embedding == :phase_ramp && res.converged
+      @test maximum(abs.(res.V .- V0 .* [1, 1, cis(-deg2rad(φ)), cis(-deg2rad(φ))])) < 1e-10
+      @test imag(A.apslf_shift_split(Y, 1).Ybase[2, 3]) > 0
+   end
+
    # a lossless capacitive pair has no clear sign: not ramped, the result is the :off kernel
    Y = _radial_pst(150.0, 0.0 - 0.08im)
    res = solve(Y)
@@ -271,6 +283,14 @@ _radial_pst(shift_deg, z) = build_ybus(
    @test res.shift_embedding == :off
    @test [(s.i, s.j, s.reason) for s in res.shift_skipped] == [(2, 3, :no_partner)]
    @test res.V == solve(Yd; shift_embedding = :off).V
+   # the same partner as a stored zero: counts as absent, no NaN in the base network
+   Yz = copy(Yd)
+   Yz[3, 2] = 1.0
+   Yz.nzval[findfirst(p -> Yz.rowval[p] == 3, nzrange(Yz, 2))+first(nzrange(Yz, 2))-1] = 0
+   @test nnz(Yz) == nnz(Yd) + 1
+   sp = A.apslf_shift_split(Yz, 4)
+   @test isempty(sp.rows) && [(s.i, s.j, s.reason) for s in sp.skipped] == [(2, 3, :no_partner)]
+   @test solve(Yz).V == solve(Yz; shift_embedding = :off).V
 
    # the outer PQ loop has no ramp: :auto runs :off there, an explicit :phase_ramp is an error
    Y = _radial_pst(30.0, 0.005 + 0.08im)

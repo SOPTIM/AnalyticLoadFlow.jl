@@ -1091,19 +1091,27 @@ the series coefficients are exact.
 
 Choice of `θ`: `θ = log(Y[i,j]/Y[j,i]) / 2j` is fixed only up to `π`, the
 two candidates give `a` and `-a`. The split keeps the physical sign of the
-coupling: a branch `y = 1/(r + jx)` with `r ≥ 0` gives `a = -y/t` with
-`real(a) ≤ 0`, for inductive and capacitive `x` alike, so the branch with
-`real(a) < 0` is taken. This covers shifts above 90 degrees (vector groups
-such as Yd5 with 150 degrees). A lossless pair (`real(a)` below `1e-9 |a|`)
-is taken as inductive (`imag(a) > 0`) and checked against the row sums of
-`Y`: the base network should cancel the series coupling in the row sums of
-both buses. If the other sign cancels better (a lossless capacitive element,
-or a weak coupling next to a large shunt), the pair is not ramped.
+coupling, which covers shifts above 90 degrees (vector groups such as Yd5
+with 150 degrees). An inductive branch `y = 1/(r + jx)` with `r ≥ 0` gives
+`a = -y/t` with `real(a) ≤ 0` and `imag(a) > 0`; if one candidate has both
+signs, it is taken. Otherwise the candidates are a capacitive branch with
+`r ≥ 0` and an inductive one with `r < 0` (negative resistances occur in
+MATPOWER data, also on a line parallel to a shifter), and the row sums of `Y`
+decide: the base network should cancel the series coupling in the row sums
+of both buses. A lossless pair (`real(a)` below `1e-9 |a|`) is taken as
+inductive and is not ramped if the row sums prefer the other sign. The row
+sum test is a heuristic: a large shunt at either bus can mislead it.
+
+A symmetric pair (`Y[i,j] == Y[j,i]`) is not ramped. This includes a ratio
+of exactly `-1` (180 degrees): from `Y` alone it cannot be told apart from a
+branch with `r < 0` and `x < 0` (equivalent elements in MATPOWER data such as
+case145), so it runs the `:off` kernel and is not listed in `skipped`. A ratio
+built with `cis(deg2rad(180))` keeps a small imaginary part and is ramped.
 
 Pairs that are not ramped keep their entries of `Y` in `Ybase`, which is the
 `:off` kernel for that pair. They are listed in `skipped` as
-`(i, j, reason)` with `reason` `:no_partner` (`Y[i,j] != 0`, `Y[j,i] == 0`)
-or `:lossless_sign`.
+`(i, j, reason)` with `reason` `:no_partner` (`Y[i,j] != 0`, `Y[j,i] == 0`
+or a stored zero) or `:lossless_sign`.
 """
 function apslf_shift_split(Y::SparseY, order::Int)
    Ybase = copy(Y)
@@ -1118,6 +1126,7 @@ function apslf_shift_split(Y::SparseY, order::Int)
       i = rv[p]
       i == j && continue
       yij = nz[p]
+      yij == 0 && continue   # a stored zero counts as absent; its partner reports :no_partner
       yji = Y[j, i]
       yij == yji && continue
       if yji == 0
@@ -1127,20 +1136,27 @@ function apslf_shift_split(Y::SparseY, order::Int)
       i < j && continue   # each pair once, from its entry below the diagonal
       θ = log(yij / yji) / 2im
       a = yij * exp(-im * θ)
-      tol_re = 1e-9 * abs(a)
-      lossless = abs(real(a)) <= tol_re
-      if lossless ? imag(a) < 0 : real(a) > 0
-         # the other branch of the log: θ -> θ ∓ π, a -> -a
+      lossless = abs(real(a)) <= 1e-9 * abs(a)
+      # clear: one candidate is an inductive branch with r >= 0 (real(a) < 0, imag(a) > 0)
+      clear = !lossless && ((real(a) < 0) == (imag(a) > 0))
+      # row sums of Ybase with b at this pair; the physical sign cancels the coupling
+      cost(b) = abs(dY[i] - yij + b) + abs(dY[j] - yji + b)
+      # flip: take the other branch of the log, θ -> θ ∓ π, a -> -a
+      flip = clear ? real(a) > 0 : imag(a) < 0
+      if !clear
+         # lossless, or capacitive with r >= 0 against inductive with r < 0
+         # (negative-r branches occur in MATPOWER data): the row sums decide
+         if cost(flip ? -a : a) > cost(flip ? a : -a)
+            if lossless
+               push!(skipped, (i = i, j = j, reason = :lossless_sign))
+               continue
+            end
+            flip = !flip
+         end
+      end
+      if flip
          θ -= real(θ) >= 0 ? pi : -pi
          a = yij * exp(-im * θ)
-      end
-      if lossless
-         # row sums of Ybase with a and with -a at this pair; the physical sign cancels the coupling
-         cost(b) = abs(dY[i] - yij + b) + abs(dY[j] - yji + b)
-         if cost(a) > cost(-a)
-            push!(skipped, (i = i, j = j, reason = :lossless_sign))
-            continue
-         end
       end
       Ybase[i, j] = a
       Ybase[j, i] = a

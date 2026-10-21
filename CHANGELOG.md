@@ -2,7 +2,7 @@
 
 ## Version 0.10.3
 - Phase shifters: the default `shift_embedding = :auto` ramps the shift angle with `s`. On case6495rte the Padé pole pair moves from |s| = 0.30 to 0.73; without NR polish the run still reports `converged = false` (voltage error 8e-6 pu at order 24, 1e-8 pu at order 32, #23)
-- Shifts above 90 degrees (vector groups) keep the physical sign of the coupling
+- Shifts above 90 degrees (vector groups) keep the physical sign of the coupling, also next to negative resistances
 - The result reports the embedding that ran (`shift_embedding`, `shift_skipped`)
 
 ## Version 0.10.2
