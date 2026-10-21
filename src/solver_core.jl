@@ -1074,69 +1074,113 @@ end
 apslf_row_sums(Y::AbstractMatrix{ComplexF64}) = apslf_row_sums(sparse_Y(Y))
 
 """
-    apslf_shift_split(Y, mode, order) -> (Ybase, rows, cols, coeff)
+    apslf_shift_split(Y, order) -> NamedTuple (Ybase, rows, cols, coeff, skipped)
 
-Experimental (branch experiment/phase-ramp). Splits `Y` for a shift
-embedding of the `:deviation` germ:
+Split of `Y` for the phase ramp embedding (`shift_embedding = :phase_ramp`)
+of the `:deviation` germ:
 
     Y(s) = Ybase - (1 - s) diag(Ybase·1) + ΔY(s),   ΔY(0) = 0,   Ybase + ΔY(1) = Y
 
-`ΔY(s)` lives on the asymmetric off-diagonal entries `(rows[e], cols[e])`
-only; `coeff[e, k]` is its Taylor coefficient of `s^k`, `k = 1..order`.
+Every asymmetric off-diagonal pair is written as `Y[i,j] = a·exp(jθ)`,
+`Y[j,i] = a·exp(-jθ)`. `θ` is real for a phase shifter and complex for
+parallel branches with different shifts. `Ybase` carries `a` on both
+entries, the shift angle is ramped as `s·θ`. `ΔY(s)` lives on the ramped
+entries `(rows[e], cols[e])`; `coeff[e, k] = a (±jθ)^k / k!` is its Taylor
+coefficient of `s^k`, `k = 1..order`. All terms up to `order` are kept, so
+the series coefficients are exact.
 
-- `mode = :phase_ramp`: every asymmetric pair is written as
-  `Y[i,j] = a·exp(jθ)`, `Y[j,i] = a·exp(-jθ)` with
-  `θ = log(Y[i,j]/Y[j,i]) / 2j` (real for a phase shifter, complex for
-  parallel branches with different shifts) and `a = Y[i,j]·exp(-jθ)`.
-  `Ybase` carries `a`, the shift angle is ramped as `s·θ`:
-  `coeff[e, k] = a (jθ)^k / k!`. All terms up to `order` are kept, so the
-  series coefficients are exact (no truncation of the exponential).
-- `mode = :sym_rowsum`: `Ybase = (Y + transpose(Y)) / 2`, only its row sums
-  are ramped; the antisymmetric part is ramped linearly,
-  `coeff[e, 1] = (Y[i,j] - Y[j,i]) / 2`, higher coefficients zero.
+Choice of `θ`: `θ = log(Y[i,j]/Y[j,i]) / 2j` is fixed only up to `π`, the
+two candidates give `a` and `-a`. The split keeps the physical sign of the
+coupling: a branch `y = 1/(r + jx)` with `r ≥ 0` gives `a = -y/t` with
+`real(a) ≤ 0`, for inductive and capacitive `x` alike, so the branch with
+`real(a) < 0` is taken. This covers shifts above 90 degrees (vector groups
+such as Yd5 with 150 degrees). A lossless pair (`real(a)` below `1e-9 |a|`)
+is taken as inductive (`imag(a) > 0`) and checked against the row sums of
+`Y`: the base network should cancel the series coupling in the row sums of
+both buses. If the other sign cancels better (a lossless capacitive element,
+or a weak coupling next to a large shunt), the pair is not ramped.
 
-Throws `ArgumentError` if an asymmetric entry has no structural partner
-(`Y[j,i] == 0`), which a branch model never produces.
+Pairs that are not ramped keep their entries of `Y` in `Ybase`, which is the
+`:off` kernel for that pair. They are listed in `skipped` as
+`(i, j, reason)` with `reason` `:no_partner` (`Y[i,j] != 0`, `Y[j,i] == 0`)
+or `:lossless_sign`.
 """
-function apslf_shift_split(Y::SparseY, mode::Symbol, order::Int)
-   mode in (:phase_ramp, :sym_rowsum) || throw(ArgumentError("shift embedding must be :phase_ramp or :sym_rowsum, got :$(mode)"))
+function apslf_shift_split(Y::SparseY, order::Int)
    Ybase = copy(Y)
    rv = rowvals(Y)
    nz = nonzeros(Y)
-   nzb = nonzeros(Ybase)
+   dY = apslf_row_sums(Y)
    rows = Int[]
    cols = Int[]
    cvec = Vector{ComplexF64}[]
-   for j = 1:size(Y, 2), p in nzrange(Y, j)
+   skipped = NamedTuple{(:i, :j, :reason),Tuple{Int,Int,Symbol}}[]
+   for j in axes(Y, 2), p in nzrange(Y, j)
       i = rv[p]
       i == j && continue
       yij = nz[p]
       yji = Y[j, i]
       yij == yji && continue
-      yji == 0 && throw(ArgumentError("apslf_shift_split: Y[$i,$j] has no structural partner Y[$j,$i]"))
-      c = zeros(ComplexF64, order)
-      if mode == :phase_ramp
-         θ = log(yij / yji) / 2im
+      if yji == 0
+         push!(skipped, (i = i, j = j, reason = :no_partner))
+         continue
+      end
+      i < j && continue   # each pair once, from its entry below the diagonal
+      θ = log(yij / yji) / 2im
+      a = yij * exp(-im * θ)
+      tol_re = 1e-9 * abs(a)
+      lossless = abs(real(a)) <= tol_re
+      if lossless ? imag(a) < 0 : real(a) > 0
+         # the other branch of the log: θ -> θ ∓ π, a -> -a
+         θ -= real(θ) >= 0 ? pi : -pi
          a = yij * exp(-im * θ)
-         nzb[p] = a
+      end
+      if lossless
+         # row sums of Ybase with a and with -a at this pair; the physical sign cancels the coupling
+         cost(b) = abs(dY[i] - yij + b) + abs(dY[j] - yji + b)
+         if cost(a) > cost(-a)
+            push!(skipped, (i = i, j = j, reason = :lossless_sign))
+            continue
+         end
+      end
+      Ybase[i, j] = a
+      Ybase[j, i] = a
+      for (r, c, sgn) in ((i, j, 1), (j, i, -1))
+         cc = zeros(ComplexF64, order)
          term = a
          for k = 1:order
-            term *= im * θ / k
-            c[k] = term
+            term *= sgn * im * θ / k
+            cc[k] = term
          end
-      else
-         nzb[p] = (yij + yji) / 2
-         order >= 1 && (c[1] = (yij - yji) / 2)
+         push!(rows, r)
+         push!(cols, c)
+         push!(cvec, cc)
       end
-      push!(rows, i)
-      push!(cols, j)
-      push!(cvec, c)
    end
    coeff = zeros(ComplexF64, length(rows), order)
    for e in eachindex(cvec)
       coeff[e, :] .= cvec[e]
    end
-   return Ybase, rows, cols, coeff
+   return (Ybase = Ybase, rows = rows, cols = cols, coeff = coeff, skipped = skipped)
+end
+
+apslf_shift_split(Y::AbstractMatrix{ComplexF64}, order::Int) = apslf_shift_split(sparse_Y(Y), order)
+
+# shift_embedding = :auto | :off | :phase_ramp, resolved once per solve.
+# :auto takes :phase_ramp only where it applies (germ :deviation, direct
+# kernel, asymmetric Y) and :off otherwise; an explicit :phase_ramp outside
+# that scope is an error. Returns :off or :phase_ramp; a Y without a pair the
+# split ramps also gives :off (see apslf_shift_split).
+function _resolve_shift_embedding(Y::SparseY, shift_embedding::Symbol, germ::Symbol, inner::Symbol)
+   shift_embedding in (:auto, :off, :phase_ramp) ||
+      throw(ArgumentError("shift_embedding must be :auto, :off or :phase_ramp, got :$(shift_embedding)"))
+   shift_embedding == :off && return :off
+   if shift_embedding == :auto
+      (germ == :deviation && inner == :direct_pv && !issymmetric(Y)) || return :off
+   else
+      germ == :deviation || throw(ArgumentError("shift_embedding = :phase_ramp needs germ = :deviation"))
+      inner == :direct_pv || throw(ArgumentError("shift_embedding = :phase_ramp is only implemented for inner = :direct_pv"))
+   end
+   return :phase_ramp
 end
 
 """
@@ -2398,10 +2442,11 @@ Evaluation at `s=1`:
 Optional:
 - NR polishing (finite-difference Jacobian) for robustness/benchmark parity.
 - Consistency override `qpv_from_inj=true` recomputes PV `Q` from final injections.
-- `shift_embedding = :off` (default): experimental alternative embeddings of
-  the asymmetric (phase-shifted) entries for `germ = :deviation`,
-  `:phase_ramp` or `:sym_rowsum`, see `apslf_shift_split`. `:off`
-  leaves the kernel unchanged.
+- `shift_embedding = :auto` (default): ramps the phase shifts with `s`
+  (`:phase_ramp`, see `apslf_shift_split`) when `germ = :deviation` and `Y`
+  has asymmetric off-diagonal pairs, else `:off`. `:off` is the kernel
+  without the ramp; for a symmetric `Y` both give the same result bit for
+  bit. `:phase_ramp` forces the ramp and needs `germ = :deviation`.
 """
 function apslf_pf_pv_direct(
    Y::SparseY,
@@ -2414,7 +2459,7 @@ function apslf_pf_pv_direct(
    order::Int = 24,
    use_pade::Bool = true,
    germ::Symbol = :deviation,
-   shift_embedding::Symbol = :off,
+   shift_embedding::Symbol = :auto,
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    debug::Bool = false,
    debug_every::Int = 1,
@@ -2432,10 +2477,8 @@ function apslf_pf_pv_direct(
    @assert length(Pspec) == nbus && length(Qspec) == nbus && length(Vm) == nbus
    @assert 1 <= slack <= nbus
    @assert order >= 1
-   shift_embedding in (:off, :phase_ramp, :sym_rowsum) ||
-      throw(ArgumentError("shift_embedding must be :off, :phase_ramp or :sym_rowsum, got :$(shift_embedding)"))
-   shift_embedding == :off || germ == :deviation ||
-      throw(ArgumentError("shift_embedding = :$(shift_embedding) needs germ = :deviation"))
+   # phase ramp split (apslf_shift_split); a ramp without a pair to ramp is :off, the unchanged kernel
+   sp = _resolve_shift_embedding(Y, shift_embedding, germ, :direct_pv) == :phase_ramp ? apslf_shift_split(Y, order) : nothing
 
    Yuse = Y
 
@@ -2468,15 +2511,12 @@ function apslf_pf_pv_direct(
    V0 = fill(1.0 + 0.0im, nbus)
    V0[nonslack] .= apslf_germ(Yuse, nonslack, slack, Vslack, germ)
    V0[slack] = Vslack
-   # Experimental shift embedding: Y(s) = Ybase - (1-s) diag(Ybase·1) + ΔY(s) (apslf_shift_split).
+   # Phase ramp: Y(s) = Ybase - (1-s) diag(Ybase·1) + ΔY(s) (apslf_shift_split).
    # With :off, Ybase is Y itself and the kernel is the :deviation embedding unchanged.
-   if shift_embedding == :off
-      Ybase = Yuse
-      sh_rows, sh_cols, sh_coeff = Int[], Int[], zeros(ComplexF64, 0, order)
-   else
-      Ybase, sh_rows, sh_cols, sh_coeff = apslf_shift_split(Yuse, shift_embedding, order)
-   end
-   sh_corr = zeros(ComplexF64, shift_embedding == :off ? 0 : nbus)   # (Σ_k ΔY_k V^(n-k)) per bus
+   shift_mode = (sp === nothing || isempty(sp.rows)) ? :off : :phase_ramp
+   Ybase = shift_mode == :off ? Yuse : sp.Ybase
+   sh_rows, sh_cols, sh_coeff = shift_mode == :off ? (Int[], Int[], zeros(ComplexF64, 0, order)) : (sp.rows, sp.cols, sp.coeff)
+   sh_corr = zeros(ComplexF64, shift_mode == :off ? 0 : nbus)   # (Σ_k ΔY_k V^(n-k)) per bus
    # :deviation embedding: constant matrix Y0 = Ybase - diag(d), d = Ybase·1 ramped with s on the RHS
    drow = germ == :deviation ? apslf_row_sums(Ybase) : zeros(ComplexF64, nbus)
    Vcoeff[:, 1] .= V0
@@ -2678,7 +2718,7 @@ function apslf_pf_pv_direct(
       fill!(rhs, 0.0)
 
       # Shift embedding: Σ_{k=1..n} ΔY_k V^(n-k); the slack column enters with V^(0) at k = n
-      if shift_embedding != :off
+      if shift_mode != :off
          fill!(sh_corr, 0.0 + 0.0im)
          @inbounds for e in eachindex(sh_rows)
             acc = 0.0 + 0.0im
@@ -2698,7 +2738,7 @@ function apslf_pf_pv_direct(
          if _is_pq(bustype[i])
             f = Sstar[i] * Wc_prev[i]
             germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
-            shift_embedding == :off || (f -= sh_corr[i])
+            shift_mode == :off || (f -= sh_corr[i])
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2708,7 +2748,7 @@ function apslf_pf_pv_direct(
             acc = conv_Q_Wc_known_shifted(n, kpv, i)
             f = Pspec[i] * Wc_prev[i] - 1.0im * acc
             germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
-            shift_embedding == :off || (f -= sh_corr[i])
+            shift_mode == :off || (f -= sh_corr[i])
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2908,6 +2948,23 @@ APSLF germ semantics (`germ` keyword):
   `germ_check = false` skips the `:noload` check and its factorization; the
   `:flat` residual is still computed for the diagnosis, without a warning.
 
+Phase shifters (`shift_embedding` keyword):
+- `shift_embedding = :auto` (default): for `germ = :deviation`,
+  `inner = :direct_pv` and a `Y` with asymmetric off-diagonal pairs (phase
+  shifters) the shift angles are ramped with `s` (`:phase_ramp`). The germ network then
+  has no phase shift, which moves the Padé poles that a shifted germ network
+  puts near `s = 1` (case6495rte). In every other case `:auto` runs the
+  unchanged kernel (`:off`), for a symmetric `Y` bit for bit. With the outer
+  `:pq` loop `:auto` is `:off`.
+- `:phase_ramp` forces the ramp and throws for another germ or
+  `inner = :pq`. `:off` switches it off.
+- The split and the choice of the branch of the shift angle are described
+  in `apslf_shift_split`. Pairs it does not ramp (an entry without partner,
+  a lossless pair whose sign is not clear) stay in the base network.
+- The result reports the embedding that ran in `shift_embedding` (`:off` or
+  `:phase_ramp`) and the pairs that were not ramped in `shift_skipped`.
+- `converged` keeps its meaning and its tolerances; no Newton step is added.
+
 Non-converged result:
 When the outer loop ends without convergence, the result carries
 `diagnosis` from [`apslf_convergence_diagnosis`](@ref) (nearest Padé pole,
@@ -3009,7 +3066,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    order::Int = 24,
    use_pade::Bool = true,
    germ::Symbol = :deviation,    # :deviation | :noload | :flat
-   shift_embedding::Symbol = :off,   # experimental, :direct_pv only (apslf_shift_split)
+   shift_embedding::Symbol = :auto,  # :auto | :off | :phase_ramp (apslf_shift_split)
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    inner::Symbol = :direct_pv,   # :direct_pv | :pq
    max_outer::Int = 30,
@@ -3070,8 +3127,11 @@ function _solve_pf_apslf_with_pv_q_limits(
    end
    @assert inner in (:pq, :direct_pv) "inner must be :pq | :direct_pv (former name :direct_pv_sparse)"
    germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
-   shift_embedding == :off || inner == :direct_pv ||
-      throw(ArgumentError("shift_embedding = :$(shift_embedding) is only implemented for inner = :direct_pv"))
+   # Resolved once per solve; a phase ramp without a pair to ramp is :off.
+   # Assigned once each, the closures below capture them.
+   shift_split = _resolve_shift_embedding(Y, shift_embedding, germ, inner) == :phase_ramp ? apslf_shift_split(Y, 1) : nothing
+   shift_mode = (shift_split === nothing || isempty(shift_split.rows)) ? :off : :phase_ramp
+   shift_skipped = shift_split === nothing ? NamedTuple{(:i, :j, :reason),Tuple{Int,Int,Symbol}}[] : shift_split.skipped
    qdeg_tol >= 0.0 || throw(ArgumentError("qdeg_tol must be non-negative."))
    _warn_degenerate_q_limits(bustype, Qmin, Qmax; atol = qdeg_tol)
    Yuse = Y
@@ -3367,7 +3427,7 @@ function _solve_pf_apslf_with_pv_q_limits(
             order = order,
             use_pade = use_pade,
             germ = germ,
-            shift_embedding = shift_embedding,
+            shift_embedding = shift_mode,
             evaluation_options = evaluation_options,
             debug = false,
             self_check = false,
@@ -3469,6 +3529,8 @@ function _solve_pf_apslf_with_pv_q_limits(
          converged = converged,
          outer_iters = outer_iters,
          apslf_germ = germ,
+         shift_embedding = shift_mode,
+         shift_skipped = shift_skipped,
          nr_polish_enabled = nr_polish,
          nr_polish_start = nr_polish ? :apslf_solution : :none,
          nr_polish_rejected = nr_polish_rejected[],
@@ -3799,6 +3861,9 @@ Unified public entrypoint for APSLF (Holomorphic Embedding Load Flow) power flow
   - `:direct` (default, supported) → direct PV formulation (`apslf_pf_pv_direct`)
   - `:outer` (experimental) → PQ-only APSLF with outer PV loop (`apslf_pq` + secant)
 - The series are always evaluated with Padé approximants (`use_pade` has no effect).
+- `shift_embedding::Symbol = :auto`: phase shifters ramped with `s` in direct mode
+  when `Y` is non-symmetric, `:off` switches it off; see
+  `solve_pf_apslf_with_pv_q_limits`. The outer fallback runs with `:off`.
 - Additional kwargs passed to `solve_pf_apslf_with_pv_q_limits`
 
 # Returns
@@ -3809,6 +3874,8 @@ Unified public entrypoint for APSLF (Holomorphic Embedding Load Flow) power flow
 - `Q::Vector{Float64}`: Final reactive power schedule
 - `converged::Bool`: Convergence flag
 - `outer_iters::Int`: Number of outer iterations required
+- `shift_embedding::Symbol`: embedding that ran, `:phase_ramp` or `:off`;
+  `shift_skipped`: pairs not ramped, as `(i, j, reason)`
 - `Vcoeff::Matrix{ComplexF64}`: Voltage series coefficients (if `return_coeffs=true`)
 - `reason::Symbol`, `diagnosis::NamedTuple`: only when `converged = false`;
   `diagnosis.message` says why, for example
@@ -3911,9 +3978,9 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
    # converge, retry with the outer PQ loop (within the size bounds). The
    # former dense-direct retry is gone: it solved the same augmented system
    # with a dense instead of a sparse LU.
-   # the experimental shift embedding has no :pq inner path, so it skips the outer fallback
-   shift_on = get(kw_forward, :shift_embedding, :off) != :off
-   if mode == :direct && !res.converged && !shift_on
+   # The outer PQ loop has no phase ramp: it runs with shift_embedding = :off
+   # (what :auto resolves to there), also after an explicit :phase_ramp.
+   if mode == :direct && !res.converged
       npv_for_outer = count(bt -> _is_pv(bt), getfield(spec, :bustype))
       if nbus <= outer_fallback_nbus_max && npv_for_outer <= outer_fallback_pv_bus_max
          res_outer = solve_pf_apslf_with_pv_q_limits(
@@ -3927,7 +3994,7 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
             slack = getfield(spec, :slack),
             Vslack = Vslack,
             inner = :pq,
-            kw_forward...,
+            merge(kw_forward, (shift_embedding = :off,))...,
          )
          res_outer.converged && return merge(res_outer, (effective_mode = :outer,))
       elseif verbose_level >= 1
