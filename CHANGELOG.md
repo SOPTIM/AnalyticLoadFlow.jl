@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Version 0.10.2
 - Non-converged result carries `reason` and `diagnosis` (nearest Padé pole, order comparison)
 - Warnings for a `:noload` germ near zero and a `:flat` germ with an `s = 0` residual
 
