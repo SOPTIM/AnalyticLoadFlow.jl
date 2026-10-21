@@ -4,7 +4,8 @@
 # Author: Udo Schmitz
 # Organization: SOPTIM AG
 # Purpose: Tests for transformer/PST branches, the deviation embedding in all
-#          kernels, the regulated phase shifter loop and the MATPOWER importer.
+#          kernels, the phase ramp embedding, the regulated phase shifter loop
+#          and the MATPOWER importer.
 #          The germ and inner-solver tests are in test_germ_fix.jl.
 #
 # Copyright 2026 SOPTIM AG
@@ -192,6 +193,112 @@ end
    @test res.converged && max(A.compute_demo_mismatch(c, res)...) < 1e-10
    res_nl = solve_pf_apslf(c; order = 40, nr_polish = false, germ = :noload)
    @test maximum(abs.(res.V .- res_nl.V)) < 1e-8   # both variants describe the same function at s = 1
+end
+
+# Newton reference (rectangular NR of the package, flat start, no Q limits)
+function _newton_ref(Y, bt, P, Q, Vm, slack)
+   Vsl = ComplexF64(Vm[slack], 0.0)
+   V = [i == slack ? Vsl : complex(lowercase(string(bt[i])) == "pv" ? Vm[i] : 1.0) for i in eachindex(bt)]
+   cache = A.build_nr_rect_cache(copy(bt), slack)
+   for _ = 1:30
+      dx, _ = A.nr_refine_step_rect!(cache, A.sparse_Y(Y), V, P, Q, Vm; Vslack = Vsl)
+      dx < 1e-14 && break
+   end
+   return V
+end
+
+# radial 1-2-3-4, bus 1 slack, shifter with series impedance z on 2-3 (tap on side 2)
+_radial_pst(shift_deg, z) = build_ybus(
+   4,
+   [pi_branch(1, 2; r = 0.01, x = 0.1, b = 0.02), transformer_branch(2, 3; r = real(z), x = imag(z), shift_deg = shift_deg), pi_branch(3, 4; r = 0.01, x = 0.1, b = 0.02)];
+   sparse_output = true,
+)
+
+@testset "phase ramp embedding (shift_embedding)" begin
+   bt = [:slack, :pq, :pq, :pq]
+   P = [0.0, -0.3, -0.5, -0.4]
+   Q = [0.0, -0.1, -0.2, -0.1]
+   Vm = ones(4)
+   Qlim = fill(10.0, 4)
+   solve(Y; kw...) = A.solve_pf_apslf_with_pv_q_limits(Y, bt, P, Q, Vm, -Qlim, Qlim; order = 24, nr_polish = false, enforce_q_limits = false, kw...)
+
+   # small shifter in the 9-bus case: the default (:auto) ramps and matches Newton
+   c = demo_case_9bus_pst(shift_deg = 30.0, enforce_q_limits = false, sparse_output = true)
+   res = solve_pf_apslf(c; order = 24, nr_polish = false)
+   @test res.shift_embedding == :phase_ramp && isempty(res.shift_skipped)
+   @test res.converged
+   Vn = _newton_ref(c.Y, c.bustype, c.Pspec, c.Qspec, c.Vm, c.slack)
+   @test maximum(abs.(res.V .- Vn)) < 1e-10
+
+   # shifts above 90 degrees (vector groups): the radial net only turns buses 3 and 4 by -φ,
+   # for inductive and capacitive series elements with losses
+   for z in (0.005 + 0.08im, 0.005 - 0.08im)
+      V0 = solve(_radial_pst(0.0, z)).V
+      for φ in (150.0, -150.0, 170.0)
+         Y = _radial_pst(φ, z)
+         Vref = copy(V0)
+         Vref[3:4] .*= cis(-deg2rad(φ))
+         res = solve(Y)
+         @test res.shift_embedding == :phase_ramp
+         @test res.converged
+         @test maximum(abs.(res.V .- Vref)) < 1e-10
+         sp = A.apslf_shift_split(Y, 24)
+         @test real(sp.Ybase[2, 3]) < 0 && sp.Ybase[2, 3] == sp.Ybase[3, 2]   # physical sign kept
+         ΔY1 = sparse(sp.rows, sp.cols, vec(sum(sp.coeff, dims = 2)), 4, 4)
+         @test maximum(abs.(sp.Ybase .+ ΔY1 .- Y)) < 1e-12 * maximum(abs.(Y))
+      end
+   end
+
+   # negative series resistance (MATPOWER data, also on a line parallel to a shifter): the
+   # inductive candidate has real(a) > 0, the row sums pick it instead of a near-180 degree ramp
+   z = -0.002 + 0.08im
+   V0 = solve(_radial_pst(0.0, z)).V
+   for φ in (10.0, 30.0)
+      Y = _radial_pst(φ, z)
+      res = solve(Y)
+      @test res.shift_embedding == :phase_ramp && res.converged
+      @test maximum(abs.(res.V .- V0 .* [1, 1, cis(-deg2rad(φ)), cis(-deg2rad(φ))])) < 1e-10
+      @test imag(A.apslf_shift_split(Y, 1).Ybase[2, 3]) > 0
+   end
+
+   # a lossless capacitive pair has no clear sign: not ramped, the result is the :off kernel
+   Y = _radial_pst(150.0, 0.0 - 0.08im)
+   res = solve(Y)
+   @test res.shift_embedding == :off
+   @test [s.reason for s in res.shift_skipped] == [:lossless_sign]
+   @test res.V == solve(Y; shift_embedding = :off).V
+
+   # no shifter: :auto is the unchanged kernel, bit for bit
+   c9 = A.demo_case_9bus()
+   r_auto = solve_pf_apslf(c9; order = 24, nr_polish = false, return_coeffs = true)
+   r_off = solve_pf_apslf(c9; order = 24, nr_polish = false, return_coeffs = true, shift_embedding = :off)
+   @test r_auto.shift_embedding == :off
+   @test r_auto.V == r_off.V && r_auto.Vcoeff == r_off.Vcoeff
+
+   # an entry without structural partner: :auto falls back to :off instead of throwing
+   Yd = Matrix(_radial_pst(30.0, 0.005 + 0.08im) + build_ybus(4, [pi_branch(1, 4; r = 0.02, x = 0.2)]; sparse_output = true))
+   Yd[3, 2] = 0
+   Yd = dropzeros!(sparse(Yd))
+   res = solve(Yd)
+   @test res.shift_embedding == :off
+   @test [(s.i, s.j, s.reason) for s in res.shift_skipped] == [(2, 3, :no_partner)]
+   @test res.V == solve(Yd; shift_embedding = :off).V
+   # the same partner as a stored zero: counts as absent, no NaN in the base network
+   Yz = copy(Yd)
+   Yz[3, 2] = 1.0
+   Yz.nzval[findfirst(p -> Yz.rowval[p] == 3, nzrange(Yz, 2))+first(nzrange(Yz, 2))-1] = 0
+   @test nnz(Yz) == nnz(Yd) + 1
+   sp = A.apslf_shift_split(Yz, 4)
+   @test isempty(sp.rows) && [(s.i, s.j, s.reason) for s in sp.skipped] == [(2, 3, :no_partner)]
+   @test solve(Yz).V == solve(Yz; shift_embedding = :off).V
+
+   # the outer PQ loop has no ramp: :auto runs :off there, an explicit :phase_ramp is an error
+   Y = _radial_pst(30.0, 0.005 + 0.08im)
+   @test solve(Y; inner = :pq).shift_embedding == :off
+   @test_throws ArgumentError solve(Y; inner = :pq, shift_embedding = :phase_ramp)
+   @test_throws ArgumentError solve(Y; germ = :noload, shift_embedding = :phase_ramp)
+   @test solve(Y; germ = :noload).shift_embedding == :off
+   @test_throws ArgumentError solve(Y; shift_embedding = :sym_rowsum)
 end
 
 const _PEGASE_1354 = normpath(joinpath(@__DIR__, "..", "data", "_downloaded", "case1354pegase.m"))

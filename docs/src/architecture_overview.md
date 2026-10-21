@@ -323,7 +323,7 @@ flowchart TD
 | Synthetic LV network | included | radial 400 V PQ network, not a real grid |
 | Parametric tiled grid | included | configurable bus count and timing measurement |
 | CGMES import | not included | no external import workflow |
-| Transformers and phase shifters | supported | complex tap, both embeddings of theory Section 6.5, regulated PST outer loop |
+| Transformers and phase shifters | supported | complex tap, both embeddings of theory Section 6.5, phase ramp for shifters (`shift_embedding = :auto`), regulated PST outer loop |
 | MATPOWER import | included | MATPOWER conventions (angle in degrees, tap on the from side) |
 | Transformer tap/OLTC control | not included | no industrial control logic |
 | GUI, web API, or service | not included | pure Julia library plus console examples |
