@@ -979,6 +979,8 @@ function apslf_convergence_diagnosis(
    elseif pade_change > tol
       reason = :pade_not_converged
       message = @sprintf("Pade value at s = 1 still changes by %.2e pu from order %d to %d", pade_change, order - 2, order)
+      # the series is still moving, so more terms are the first thing to try
+      order < 32 && (message *= "; a higher order (e.g. 32) lowers the mismatch")
    else
       reason = :mismatch_above_tol
       message = "Pade value at s = 1 is stable in the order, the mismatch stays above the tolerance"
