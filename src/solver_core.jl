@@ -2922,6 +2922,24 @@ admittance matrix for this NR refinement (for example, APSLF without bus shunts
 followed by NR polish with the full Y-bus). When this alternate matrix is used,
 the post-polish injections and convergence checks also use it so the returned
 `converged` flag is consistent with the polished state.
+
+Shift embedding (experimental, `inner = :direct_pv` only):
+- `shift_embedding = :off` (default), `:phase_ramp`, `:sym_rowsum`: see
+  `apslf_shift_split`. `:auto` takes `:phase_ramp` when `Y` has
+  asymmetric off-diagonal pairs (phase shifters) and `:off` otherwise, so a
+  symmetric `Y` runs the unchanged kernel.
+- With a shift embedding active and `nr_polish = false`, a Padé value whose
+  mismatch is above `mis_tol_p`/`mis_tol_q` gets at most
+  `newton_finish_steps` (default 2) undamped Newton steps (Newton finish).
+  The steps are kept only if their summed length is at most
+  `newton_finish_max_step` (default 1e-5 pu, largest real or imaginary
+  voltage component per step) and the mismatch after them is below the
+  tolerances; otherwise the Padé value stays. Short steps that land on the
+  tolerance show that the Padé value lies in the quadratic basin of that
+  solution; a wrong or diverged Padé value fails one of both tests. On large
+  networks the Padé value at `s = 1` stops improving near 1e-8 pu, which
+  with `|Y_ii|` around 100 pu leaves a mismatch near 1e-6 pu. The result
+  field `newton_finish` tells whether the steps were kept.
 """
 function solve_pf_apslf_with_pv_q_limits(
    Y::AbstractMatrix{ComplexF64},
@@ -3035,6 +3053,8 @@ function _solve_pf_apslf_with_pv_q_limits(
    nr_polish_fallback_to_apslf::Bool = true,
    nr_polish_allow_worse_result::Bool = false,
    nr_polish_max_voltage_pu::Float64 = 2.0,
+   newton_finish_steps::Int = 2,
+   newton_finish_max_step::Float64 = 1e-5,
    mis_tol_p::Float64 = 1e-8,
    mis_tol_q::Float64 = 1e-8,
    verbose::Int = 0,
@@ -3070,8 +3090,16 @@ function _solve_pf_apslf_with_pv_q_limits(
    end
    @assert inner in (:pq, :direct_pv) "inner must be :pq | :direct_pv (former name :direct_pv_sparse)"
    germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
-   shift_embedding == :off || inner == :direct_pv ||
+   shift_embedding in (:off, :auto, :phase_ramp, :sym_rowsum) ||
+      throw(ArgumentError("shift_embedding must be :off, :auto, :phase_ramp or :sym_rowsum, got :$(shift_embedding)"))
+   shift_embedding in (:off, :auto) || inner == :direct_pv ||
       throw(ArgumentError("shift_embedding = :$(shift_embedding) is only implemented for inner = :direct_pv"))
+   newton_finish_max_step >= 0.0 || throw(ArgumentError("newton_finish_max_step must be non-negative."))
+   newton_finish_steps >= 0 || throw(ArgumentError("newton_finish_steps must be non-negative."))
+   # :auto resolves once per solve: :phase_ramp for an asymmetric Y on the direct kernel, else :off
+   shift_mode = shift_embedding == :auto ? (inner == :direct_pv && !issymmetric(Y) ? :phase_ramp : :off) : shift_embedding
+   newton_finish = shift_mode != :off && !nr_polish && newton_finish_steps > 0
+   newton_finish_used = Ref(false)
    qdeg_tol >= 0.0 || throw(ArgumentError("qdeg_tol must be non-negative."))
    _warn_degenerate_q_limits(bustype, Qmin, Qmax; atol = qdeg_tol)
    Yuse = Y
@@ -3367,7 +3395,7 @@ function _solve_pf_apslf_with_pv_q_limits(
             order = order,
             use_pade = use_pade,
             germ = germ,
-            shift_embedding = shift_embedding,
+            shift_embedding = shift_mode,
             evaluation_options = evaluation_options,
             debug = false,
             self_check = false,
@@ -3469,6 +3497,8 @@ function _solve_pf_apslf_with_pv_q_limits(
          converged = converged,
          outer_iters = outer_iters,
          apslf_germ = germ,
+         shift_embedding = shift_mode,
+         newton_finish = newton_finish_used[],
          nr_polish_enabled = nr_polish,
          nr_polish_start = nr_polish ? :apslf_solution : :none,
          nr_polish_rejected = nr_polish_rejected[],
@@ -3649,6 +3679,37 @@ function _solve_pf_apslf_with_pv_q_limits(
       calc_injections!(Sinj, Iinj, Ypost, V)
 
       maxP, maxQpq = mismatch_metrics(V, Q)
+
+      # Step B3: Newton finish for the shift embedding (see docstring). At most
+      # newton_finish_steps undamped steps whose summed length stays within
+      # newton_finish_max_step; kept only if they reach the tolerance, else the Padé value stays.
+      newton_finish_used[] = false
+      if newton_finish && (maxP >= mis_tol_p || maxQpq >= mis_tol_q)
+         Vfin = copy(V)
+         fin_cache = build_nr_rect_cache(bt, slack)
+         path = 0.0
+         maxP_fin, maxQpq_fin = maxP, maxQpq
+         for _ = 1:newton_finish_steps
+            dxn = try
+               first(nr_refine_step_rect!(fin_cache, Yuse, Vfin, Pspec, Q, Vm; Vslack = Vsl, damping = 1.0))
+            catch err
+               # a singular Jacobian at the Padé value: no finish, the Padé value stays
+               _is_recoverable_linear_solve_error(err) || rethrow(err)
+               Inf
+            end
+            path += dxn
+            (path <= newton_finish_max_step && _all_finite_complex(Vfin)) || break
+            maxP_fin, maxQpq_fin = mismatch_metrics(Vfin, Q)
+            if maxP_fin < mis_tol_p && maxQpq_fin < mis_tol_q
+               V .= Vfin
+               maxP, maxQpq = maxP_fin, maxQpq_fin
+               newton_finish_used[] = true
+               break
+            end
+         end
+         # mismatch_metrics fills Sinj for its argument; restore it for the kept V
+         calc_injections!(Sinj, Iinj, Ypost, V)
+      end
 
       max_v_err = 0.0
       if inner == :pq
@@ -3912,7 +3973,7 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
    # former dense-direct retry is gone: it solved the same augmented system
    # with a dense instead of a sparse LU.
    # the experimental shift embedding has no :pq inner path, so it skips the outer fallback
-   shift_on = get(kw_forward, :shift_embedding, :off) != :off
+   shift_on = get(kw_forward, :shift_embedding, :off) ∉ (:off, :auto)
    if mode == :direct && !res.converged && !shift_on
       npv_for_outer = count(bt -> _is_pv(bt), getfield(spec, :bustype))
       if nbus <= outer_fallback_nbus_max && npv_for_outer <= outer_fallback_pv_bus_max
