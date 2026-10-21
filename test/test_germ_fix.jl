@@ -88,6 +88,13 @@ end
    )
    @test first(A.compute_demo_mismatch(case, res_flat)) > 1e-3
    @test res_flat.reason == :flat_germ_inexact   # the diagnosis names the dropped s = 0 residual
+   # germ_check = false silences the warning, the diagnosis still sees r0
+   res_flat_q = @test_logs min_level = Base.CoreLogging.Warn A.solve_pf_apslf_with_pv_q_limits(
+      case.Y, case.bustype, case.Pspec, case.Qspec, case.Vm, case.Qmin, case.Qmax;
+      slack = 1, Vslack = ComplexF64(case.Vm[1], 0), inner = :direct_pv, order = 40, nr_polish = false, germ = :flat, max_outer = 5,
+      germ_check = false,
+   )
+   @test res_flat_q.reason == :flat_germ_inexact
    @test A.apslf_row_sums(case.Y) ≈ vec(sum(case.Y, dims = 2))
 end
 

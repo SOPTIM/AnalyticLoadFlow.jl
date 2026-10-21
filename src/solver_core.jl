@@ -1102,7 +1102,8 @@ The recursion is not changed.
   `Y V = conj(S / V) + r0`. Zero only for a pure series network with `Vslack = 1`.
 - `:deviation`: exact by construction, nothing to check.
 
-Called once per solve by `solve_pf_apslf_with_pv_q_limits` (`germ_check = true`).
+Called once per solve by `solve_pf_apslf_with_pv_q_limits`; with `germ_check = false`
+there only for `:flat`, with `warn = false`.
 Returns `(vmin, vmin_bus, r0max, r0_bus)`, `NaN` and 0 where not applicable.
 """
 function apslf_germ_check(
@@ -2806,6 +2807,8 @@ APSLF germ semantics (`germ` keyword):
 - `germ_check = true` (default) runs [`apslf_germ_check`](@ref) once per
   solve: a warning for a `:noload` germ with `min |V0|` below 0.3 pu (with
   the bus) and for a `:flat` germ that violates the `s = 0` equation.
+  `germ_check = false` skips the `:noload` check and its factorization; the
+  `:flat` residual is still computed for the diagnosis, without a warning.
 
 Non-converged result:
 When the outer loop ends without convergence, the result carries
@@ -2986,8 +2989,12 @@ function _solve_pf_apslf_with_pv_q_limits(
 
    make_S(P::Vector{Float64}, Qv::Vector{Float64}) = ComplexF64.(P, Qv)
    Vsl = (Vslack === nothing) ? ComplexF64(Vm[slack], 0.0) : Vslack
-   # Germ warnings once per solve (:noload near zero, :flat with an s = 0 residual)
-   germ_info = apslf_germ_check(Yuse, slack, Vsl, germ; warn = germ_check)
+   # Germ warnings once per solve (:noload near zero, :flat with an s = 0 residual).
+   # With germ_check = false only :flat is checked (silently): its r0max feeds the
+   # non-convergence diagnosis and costs one product; :noload would cost a factorization.
+   germ_info =
+      (germ_check || germ == :flat) ? apslf_germ_check(Yuse, slack, Vsl, germ; warn = germ_check) :
+      (vmin = NaN, vmin_bus = 0, r0max = NaN, r0_bus = 0)
 
    all_switch_log =
       Vector{NamedTuple{(:outer, :bus, :qinj, :qmin, :qmax, :side),Tuple{Int,Int,Float64,Float64,Float64,Symbol}}}()
