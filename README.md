@@ -162,6 +162,8 @@ res = solve_pf_apslf(
 
 APSLF uses the canonical analytic germ `V(s=0)=1∠0`. This is not a user-selectable Newton-style start value. If Newton polish is enabled, it starts from the APSLF solution.
 
+When a run does not converge, the result carries `reason` and `diagnosis`. `diagnosis.message` names the cause, for example "s = 1 outside the Pade convergence region of the :deviation embedding (pole pair at |s| = 0.30)": the embedding has a singularity between the germ and the solution, and a higher order does not help. The experimental germs are checked once per solve: `:noload` warns when the no-load voltage drops below 0.3 pu at a bus, `:flat` warns when it violates the `s = 0` equation. `germ_check = false` switches the warnings off.
+
 ## Theory
 
 See `docs/src/theorie-eng.md` for the theory article.

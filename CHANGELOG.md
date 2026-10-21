@@ -1,5 +1,9 @@
 # Changelog
 
+## Version 0.10.2
+- Non-converged result carries `reason` and `diagnosis` (nearest Padé pole, order comparison)
+- Warnings for a `:noload` germ near zero and a `:flat` germ with an `s = 0` residual
+
 ## Version 0.10.1
 - Fixed: NR-polish autodamping test depended on round-off (FMA contraction on LLVM 23), see #20
 

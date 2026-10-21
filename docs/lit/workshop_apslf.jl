@@ -774,10 +774,15 @@ end
 # `:noload` for comparisons (it diverges on large networks, see the PEGASE
 # notebook), `:flat` only to reproduce results of versions before 0.9.15.
 
-println("germ        converged   max mismatch (pu)   min |V| (pu)")
+# The solver warns when a `:flat` germ violates the $s = 0$ equation. The
+# cell switches that warning off (`germ_check = false`) and prints the
+# `reason` that a non-converged result carries instead.
+
+println("germ        converged   max mismatch (pu)   min |V| (pu)   reason")
 for germ in (:deviation, :noload, :flat)
-   rg = solve_pf_apslf(case; order = 40, nr_polish = false, germ = germ)
-   @printf("%-11s %-11s %.2e            %.3f\n", germ, rg.converged, mismatch(case, rg), minimum(abs.(rg.V)))
+   rg = solve_pf_apslf(case; order = 40, nr_polish = false, germ = germ, germ_check = false)
+   @printf("%-11s %-11s %.2e            %.3f          %s\n", germ, rg.converged, mismatch(case, rg), minimum(abs.(rg.V)), rg.converged ? "" : rg.reason)
+   @assert rg.converged || rg.reason == :flat_germ_inexact   #src
    @assert (germ == :flat) == (mismatch(case, rg) > 0.1) && rg.converged == (germ != :flat)   #src
 end
 
