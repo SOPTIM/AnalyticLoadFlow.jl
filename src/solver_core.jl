@@ -1074,6 +1074,72 @@ end
 apslf_row_sums(Y::AbstractMatrix{ComplexF64}) = apslf_row_sums(sparse_Y(Y))
 
 """
+    apslf_shift_split(Y, mode, order) -> (Ybase, rows, cols, coeff)
+
+Experimental (branch experiment/phase-ramp). Splits `Y` for a shift
+embedding of the `:deviation` germ:
+
+    Y(s) = Ybase - (1 - s) diag(Ybase·1) + ΔY(s),   ΔY(0) = 0,   Ybase + ΔY(1) = Y
+
+`ΔY(s)` lives on the asymmetric off-diagonal entries `(rows[e], cols[e])`
+only; `coeff[e, k]` is its Taylor coefficient of `s^k`, `k = 1..order`.
+
+- `mode = :phase_ramp`: every asymmetric pair is written as
+  `Y[i,j] = a·exp(jθ)`, `Y[j,i] = a·exp(-jθ)` with
+  `θ = log(Y[i,j]/Y[j,i]) / 2j` (real for a phase shifter, complex for
+  parallel branches with different shifts) and `a = Y[i,j]·exp(-jθ)`.
+  `Ybase` carries `a`, the shift angle is ramped as `s·θ`:
+  `coeff[e, k] = a (jθ)^k / k!`. All terms up to `order` are kept, so the
+  series coefficients are exact (no truncation of the exponential).
+- `mode = :sym_rowsum`: `Ybase = (Y + transpose(Y)) / 2`, only its row sums
+  are ramped; the antisymmetric part is ramped linearly,
+  `coeff[e, 1] = (Y[i,j] - Y[j,i]) / 2`, higher coefficients zero.
+
+Throws `ArgumentError` if an asymmetric entry has no structural partner
+(`Y[j,i] == 0`), which a branch model never produces.
+"""
+function apslf_shift_split(Y::SparseY, mode::Symbol, order::Int)
+   mode in (:phase_ramp, :sym_rowsum) || throw(ArgumentError("shift embedding must be :phase_ramp or :sym_rowsum, got :$(mode)"))
+   Ybase = copy(Y)
+   rv = rowvals(Y)
+   nz = nonzeros(Y)
+   nzb = nonzeros(Ybase)
+   rows = Int[]
+   cols = Int[]
+   cvec = Vector{ComplexF64}[]
+   for j = 1:size(Y, 2), p in nzrange(Y, j)
+      i = rv[p]
+      i == j && continue
+      yij = nz[p]
+      yji = Y[j, i]
+      yij == yji && continue
+      yji == 0 && throw(ArgumentError("apslf_shift_split: Y[$i,$j] has no structural partner Y[$j,$i]"))
+      c = zeros(ComplexF64, order)
+      if mode == :phase_ramp
+         θ = log(yij / yji) / 2im
+         a = yij * exp(-im * θ)
+         nzb[p] = a
+         term = a
+         for k = 1:order
+            term *= im * θ / k
+            c[k] = term
+         end
+      else
+         nzb[p] = (yij + yji) / 2
+         order >= 1 && (c[1] = (yij - yji) / 2)
+      end
+      push!(rows, i)
+      push!(cols, j)
+      push!(cvec, c)
+   end
+   coeff = zeros(ComplexF64, length(rows), order)
+   for e in eachindex(cvec)
+      coeff[e, :] .= cvec[e]
+   end
+   return Ybase, rows, cols, coeff
+end
+
+"""
     apslf_noload_germ(F, Yslack, Vslack) -> Vector{ComplexF64}
 
 No-load germ from a factorization `F` of the reduced matrix and the reduced
@@ -2332,6 +2398,10 @@ Evaluation at `s=1`:
 Optional:
 - NR polishing (finite-difference Jacobian) for robustness/benchmark parity.
 - Consistency override `qpv_from_inj=true` recomputes PV `Q` from final injections.
+- `shift_embedding = :off` (default): experimental alternative embeddings of
+  the asymmetric (phase-shifted) entries for `germ = :deviation`,
+  `:phase_ramp` or `:sym_rowsum`, see `apslf_shift_split`. `:off`
+  leaves the kernel unchanged.
 """
 function apslf_pf_pv_direct(
    Y::SparseY,
@@ -2344,6 +2414,7 @@ function apslf_pf_pv_direct(
    order::Int = 24,
    use_pade::Bool = true,
    germ::Symbol = :deviation,
+   shift_embedding::Symbol = :off,
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    debug::Bool = false,
    debug_every::Int = 1,
@@ -2361,6 +2432,10 @@ function apslf_pf_pv_direct(
    @assert length(Pspec) == nbus && length(Qspec) == nbus && length(Vm) == nbus
    @assert 1 <= slack <= nbus
    @assert order >= 1
+   shift_embedding in (:off, :phase_ramp, :sym_rowsum) ||
+      throw(ArgumentError("shift_embedding must be :off, :phase_ramp or :sym_rowsum, got :$(shift_embedding)"))
+   shift_embedding == :off || germ == :deviation ||
+      throw(ArgumentError("shift_embedding = :$(shift_embedding) needs germ = :deviation"))
 
    Yuse = Y
 
@@ -2393,8 +2468,17 @@ function apslf_pf_pv_direct(
    V0 = fill(1.0 + 0.0im, nbus)
    V0[nonslack] .= apslf_germ(Yuse, nonslack, slack, Vslack, germ)
    V0[slack] = Vslack
-   # :deviation embedding: constant matrix Y0 = Y - diag(d), d = Y·1 ramped with s on the RHS
-   drow = germ == :deviation ? apslf_row_sums(Yuse) : zeros(ComplexF64, nbus)
+   # Experimental shift embedding: Y(s) = Ybase - (1-s) diag(Ybase·1) + ΔY(s) (apslf_shift_split).
+   # With :off, Ybase is Y itself and the kernel is the :deviation embedding unchanged.
+   if shift_embedding == :off
+      Ybase = Yuse
+      sh_rows, sh_cols, sh_coeff = Int[], Int[], zeros(ComplexF64, 0, order)
+   else
+      Ybase, sh_rows, sh_cols, sh_coeff = apslf_shift_split(Yuse, shift_embedding, order)
+   end
+   sh_corr = zeros(ComplexF64, shift_embedding == :off ? 0 : nbus)   # (Σ_k ΔY_k V^(n-k)) per bus
+   # :deviation embedding: constant matrix Y0 = Ybase - diag(d), d = Ybase·1 ramped with s on the RHS
+   drow = germ == :deviation ? apslf_row_sums(Ybase) : zeros(ComplexF64, nbus)
    Vcoeff[:, 1] .= V0
    Wcoeff[:, 1] .= 1.0 ./ V0
    Wcoeff[slack, 1] = 1.0 / Vslack
@@ -2423,8 +2507,8 @@ function apslf_pf_pv_direct(
    # Assemble Y-block by iterating over nnz(Y):
    # For each nonzero Y[i,j] where both i and j are non-slack,
    # add contributions to real/imag split equations.
-   rv = rowvals(Yuse)
-   nzval = nonzeros(Yuse)
+   rv = rowvals(Ybase)
+   nzval = nonzeros(Ybase)
 
    @inbounds for j = 1:nbus
       tj = pos_ns[j]
@@ -2432,7 +2516,7 @@ function apslf_pf_pv_direct(
       colVr = tj
       colVi = nn + tj
 
-      for ptr in nzrange(Yuse, j)
+      for ptr in nzrange(Ybase, j)
          i = rv[ptr]
          ti = pos_ns[i]
          ti == 0 && continue  # slack row => no equations
@@ -2593,6 +2677,18 @@ function apslf_pf_pv_direct(
 
       fill!(rhs, 0.0)
 
+      # Shift embedding: Σ_{k=1..n} ΔY_k V^(n-k); the slack column enters with V^(0) at k = n
+      if shift_embedding != :off
+         fill!(sh_corr, 0.0 + 0.0im)
+         @inbounds for e in eachindex(sh_rows)
+            acc = 0.0 + 0.0im
+            for k = 1:n
+               acc += sh_coeff[e, k] * Vcoeff[sh_cols[e], n-k+1]
+            end
+            sh_corr[sh_rows[e]] += acc
+         end
+      end
+
       # Network equation RHS rows (per non-slack bus i)
       @inbounds for i in nonslack
          ti = pos_ns[i]
@@ -2602,6 +2698,7 @@ function apslf_pf_pv_direct(
          if _is_pq(bustype[i])
             f = Sstar[i] * Wc_prev[i]
             germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
+            shift_embedding == :off || (f -= sh_corr[i])
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2611,6 +2708,7 @@ function apslf_pf_pv_direct(
             acc = conv_Q_Wc_known_shifted(n, kpv, i)
             f = Pspec[i] * Wc_prev[i] - 1.0im * acc
             germ == :deviation && (f -= drow[i] * Vcoeff[i, n])   # - d_i V_i^(n-1)
+            shift_embedding == :off || (f -= sh_corr[i])
             rhs[r_re] = real(f)
             rhs[r_im] = imag(f)
 
@@ -2911,6 +3009,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    order::Int = 24,
    use_pade::Bool = true,
    germ::Symbol = :deviation,    # :deviation | :noload | :flat
+   shift_embedding::Symbol = :off,   # experimental, :direct_pv only (apslf_shift_split)
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    inner::Symbol = :direct_pv,   # :direct_pv | :pq
    max_outer::Int = 30,
@@ -2971,6 +3070,8 @@ function _solve_pf_apslf_with_pv_q_limits(
    end
    @assert inner in (:pq, :direct_pv) "inner must be :pq | :direct_pv (former name :direct_pv_sparse)"
    germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
+   shift_embedding == :off || inner == :direct_pv ||
+      throw(ArgumentError("shift_embedding = :$(shift_embedding) is only implemented for inner = :direct_pv"))
    qdeg_tol >= 0.0 || throw(ArgumentError("qdeg_tol must be non-negative."))
    _warn_degenerate_q_limits(bustype, Qmin, Qmax; atol = qdeg_tol)
    Yuse = Y
@@ -3266,6 +3367,7 @@ function _solve_pf_apslf_with_pv_q_limits(
             order = order,
             use_pade = use_pade,
             germ = germ,
+            shift_embedding = shift_embedding,
             evaluation_options = evaluation_options,
             debug = false,
             self_check = false,
@@ -3809,7 +3911,9 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
    # converge, retry with the outer PQ loop (within the size bounds). The
    # former dense-direct retry is gone: it solved the same augmented system
    # with a dense instead of a sparse LU.
-   if mode == :direct && !res.converged
+   # the experimental shift embedding has no :pq inner path, so it skips the outer fallback
+   shift_on = get(kw_forward, :shift_embedding, :off) != :off
+   if mode == :direct && !res.converged && !shift_on
       npv_for_outer = count(bt -> _is_pv(bt), getfield(spec, :bustype))
       if nbus <= outer_fallback_nbus_max && npv_for_outer <= outer_fallback_pv_bus_max
          res_outer = solve_pf_apslf_with_pv_q_limits(
