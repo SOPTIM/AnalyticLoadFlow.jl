@@ -780,6 +780,11 @@ NamedTuple with:
   otherwise `st_level(dmin)`
 - `critical::Vector{NamedTuple}`: Critical poles sorted by ascending distance:
   each entry is `(bus::Int, pole::ComplexF64, distance::Float64)`
+- `pole_min::ComplexF64`, `pole_min_bus::Int`: the pole nearest to `s = 0`
+  and its bus (`Inf` and 0 if no pole was found). A pole inside `|s| < 1`
+  limits the region where the Padé approximant converges.
+- `pole_pair::Bool`: `true` if another pole lies near `conj(pole_min)`
+  (within `0.02 * max(1, |pole_min|)`)
 
 # Definition
 For each non-slack bus `i` the series `V_i(s) = Σ V_i^(n) s^n` is cut where its
@@ -881,12 +886,113 @@ function stability_from_Vcoeff(
       throw(ArgumentError("critical_poles must be :auto or a non-negative Int."))
    end
 
+   # Pole nearest to the origin and whether its conjugate is also a pole.
+   # Taken before the list is cut to the critical poles.
+   pole_min = ComplexF64(Inf, 0.0)
+   pole_min_bus = 0
+   for c in candidates
+      if abs(c.pole) < abs(pole_min)
+         pole_min = c.pole
+         pole_min_bus = c.bus
+      end
+   end
+   pair_tol = 0.02 * max(1.0, abs(pole_min))
+   pole_pair =
+      pole_min_bus > 0 && abs(imag(pole_min)) > pair_tol && any(c -> abs(c.pole - conj(pole_min)) < pair_tol, candidates)
+
    sort!(candidates, by = x -> x.distance)
    kc = min(kc, length(candidates))
    critical = candidates[1:kc]
 
    level = radius < 1.0 ? "RED" : st_level(best_d)
-   return (dmin = best_d, pole = best_p, bus = best_bus, L = best_L, M = best_M, radius = radius, level = level, critical = critical)
+   return (
+      dmin = best_d,
+      pole = best_p,
+      bus = best_bus,
+      L = best_L,
+      M = best_M,
+      radius = radius,
+      level = level,
+      critical = critical,
+      pole_min = pole_min,
+      pole_min_bus = pole_min_bus,
+      pole_pair = pole_pair,
+   )
+end
+
+"""
+    apslf_convergence_diagnosis(Vcoeff; slack=1, order=size(Vcoeff,2)-1, germ=:deviation,
+                                tol=1e-8, region_tol=1e-2, r0max=0.0, r0_tol=1e-6) -> NamedTuple
+
+Explain why an APSLF run did not converge, from its voltage coefficients.
+`solve_pf_apslf_with_pv_q_limits` stores the result as `diagnosis` when it
+returns `converged = false` after the outer loop.
+
+- `pade_change`: largest change of the Padé value at `s = 1` from order
+  `order - 2` to `order` over the non-slack buses.
+- `pole_min`: non-doublet Padé pole nearest to `s = 0`, from
+  [`stability_from_Vcoeff`](@ref).
+
+Heuristic: `pade_change > region_tol` with `|pole_min| < 1` means `s = 1`
+lies outside the region where the approximant converges; the embedding has a
+singularity between germ and solution, and a higher order does not help. A
+pole inside the unit disc alone does not decide it (one on the negative real
+axis does not block `s = 1`). A change between `tol` and `region_tol` means
+the Padé sequence still moves. For `germ = :flat`, `r0max > r0_tol` (see
+[`apslf_germ_check`](@ref)) is reported first.
+
+Returns `(reason, message, pole_min, pole_bus, pole_pair, radius, pade_change, order)`,
+`reason` one of `:flat_germ_inexact`, `:outside_pade_region`,
+`:pade_not_converged`, `:mismatch_above_tol` (Padé value stable, mismatch
+still above the tolerance, for example after PV/PQ switching).
+"""
+function apslf_convergence_diagnosis(
+   Vcoeff::Matrix{ComplexF64};
+   slack::Int = 1,
+   order::Int = size(Vcoeff, 2) - 1,
+   germ::Symbol = :deviation,
+   tol::Float64 = 1e-8,
+   region_tol::Float64 = 1e-2,
+   r0max::Float64 = 0.0,
+   r0_tol::Float64 = 1e-6,
+)
+   st = stability_from_Vcoeff(Vcoeff; slack = slack, order = order, critical_poles = 0)
+   pade_change = NaN
+   if order >= 4
+      opts = APSLFEvaluationOptions(mode = :pade)
+      pade_change = 0.0
+      for i in axes(Vcoeff, 1)
+         i == slack && continue
+         vN = evaluate_series(Vcoeff[i, 1:(order+1)], opts; collect_logs = false).voltage
+         vN2 = evaluate_series(Vcoeff[i, 1:(order-1)], opts; collect_logs = false).voltage
+         pade_change = max(pade_change, abs(vN - vN2))
+      end
+   end
+   pmin = abs(st.pole_min)
+   what = st.pole_pair ? "pole pair" : "pole"
+   if germ == :flat && r0max > r0_tol
+      reason = :flat_germ_inexact
+      message = @sprintf("germ :flat violates the s = 0 equation (max |r0| = %.2e pu), the series solves a different problem", r0max)
+   elseif pade_change > region_tol && pmin < 1.0
+      reason = :outside_pade_region
+      message = @sprintf("s = 1 outside the Pade convergence region of the :%s embedding (%s at |s| = %.2f)", germ, what, pmin)
+   elseif pade_change > tol
+      reason = :pade_not_converged
+      message = @sprintf("Pade value at s = 1 still changes by %.2e pu from order %d to %d", pade_change, order - 2, order)
+   else
+      reason = :mismatch_above_tol
+      message = "Pade value at s = 1 is stable in the order, the mismatch stays above the tolerance"
+   end
+   return (
+      reason = reason,
+      message = message,
+      pole_min = st.pole_min,
+      pole_bus = st.pole_min_bus,
+      pole_pair = st.pole_pair,
+      radius = st.radius,
+      pade_change = pade_change,
+      order = order,
+   )
 end
 
 function _handle_deprecated_apslf_germ_kwargs(kwargs; context::AbstractString, strict::Bool = true)
@@ -979,6 +1085,65 @@ function apslf_noload_germ(F, Yslack::Vector{ComplexF64}, Vslack::ComplexF64)
    vmin = minimum(abs, V0)
    vmin > 1e-6 || error("APSLF no-load germ has a (near-)zero bus voltage (min |V0| = $(vmin)); W = 1/V is undefined.")
    return V0
+end
+
+"""
+    apslf_germ_check(Y, slack, Vslack, germ; noload_vmin=0.3, flat_r0_tol=1e-6, warn=true) -> NamedTuple
+
+Check the germ `V^(0)` of `germ` on `Y` and warn where it is a poor start.
+The recursion is not changed.
+
+- `:noload`: warns, with the bus, when `min |V0| < noload_vmin` (0.3 pu):
+  the germ is near a line charging resonance and the series radius is small.
+  Costs one extra factorization of the reduced Y-bus.
+- `:flat`: warns when `max |r0| > flat_r0_tol` (1e-6 pu), with
+  `r0 = Y V0` on the non-slack buses, `V0 = 1`, slack at `Vslack`. The
+  recursion does not carry `r0`, so the series solves
+  `Y V = conj(S / V) + r0`. Zero only for a pure series network with `Vslack = 1`.
+- `:deviation`: exact by construction, nothing to check.
+
+Called once per solve by `solve_pf_apslf_with_pv_q_limits` (`germ_check = true`).
+Returns `(vmin, vmin_bus, r0max, r0_bus)`, `NaN` and 0 where not applicable.
+"""
+function apslf_germ_check(
+   Y::AbstractMatrix{ComplexF64},
+   slack::Int,
+   Vslack::ComplexF64,
+   germ::Symbol;
+   noload_vmin::Float64 = 0.3,
+   flat_r0_tol::Float64 = 1e-6,
+   warn::Bool = true,
+)
+   nbus = size(Y, 1)
+   nonslack = [i for i = 1:nbus if i != slack]
+   vmin, vmin_bus, r0max, r0_bus = NaN, 0, NaN, 0
+   if germ == :noload && !isempty(nonslack)
+      V0 = apslf_germ(Y, nonslack, slack, Vslack, :noload)
+      k = argmin(abs.(V0))
+      vmin, vmin_bus = abs(V0[k]), nonslack[k]
+      if warn && vmin < noload_vmin
+         @warn @sprintf(
+            "APSLF germ :noload has min |V0| = %.3f pu at bus %d (below %.2f pu): the germ is near a line charging resonance and the series radius is small",
+            vmin,
+            vmin_bus,
+            noload_vmin
+         )
+      end
+   elseif germ == :flat && !isempty(nonslack)
+      V0 = fill(1.0 + 0.0im, nbus)
+      V0[slack] = Vslack
+      r0 = (sparse_Y(Y)*V0)[nonslack]
+      k = argmax(abs.(r0))
+      r0max, r0_bus = abs(r0[k]), nonslack[k]
+      if warn && r0max > flat_r0_tol
+         @warn @sprintf(
+            "APSLF germ :flat violates the s = 0 equation (max |r0| = %.2e pu at bus %d): the series solves Y V = conj(S/V) + r0, not the load flow",
+            r0max,
+            r0_bus
+         )
+      end
+   end
+   return (vmin = vmin, vmin_bus = vmin_bus, r0max = r0max, r0_bus = r0_bus)
 end
 
 function _warn_degenerate_q_limits(
@@ -2638,6 +2803,16 @@ APSLF germ semantics (`germ` keyword):
   `:deviation` and diverge with `:noload`).
 - The germ is not a Newton-Raphson start value. Legacy `flatstart`/`V0_germ`
   kwargs are deprecated and ignored with a warning.
+- `germ_check = true` (default) runs [`apslf_germ_check`](@ref) once per
+  solve: a warning for a `:noload` germ with `min |V0|` below 0.3 pu (with
+  the bus) and for a `:flat` germ that violates the `s = 0` equation.
+
+Non-converged result:
+When the outer loop ends without convergence, the result carries
+`diagnosis` from [`apslf_convergence_diagnosis`](@ref) (nearest Padé pole,
+change of the Padé value between order `order - 2` and `order`, a short
+message) and `reason = diagnosis.reason`. With `verbose >= 1` the message is
+printed in one line.
 
 Optional NR polish:
 After each inner solve, an NR refinement may be applied to the final `V`
@@ -2762,6 +2937,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    mis_tol_q::Float64 = 1e-8,
    verbose::Int = 0,
    return_coeffs::Bool = false,
+   germ_check::Bool = true,
    timeout_s::Real = 0.0,
    kwargs...,
 )
@@ -2810,12 +2986,16 @@ function _solve_pf_apslf_with_pv_q_limits(
 
    make_S(P::Vector{Float64}, Qv::Vector{Float64}) = ComplexF64.(P, Qv)
    Vsl = (Vslack === nothing) ? ComplexF64(Vm[slack], 0.0) : Vslack
+   # Germ warnings once per solve (:noload near zero, :flat with an s = 0 residual)
+   germ_info = apslf_germ_check(Yuse, slack, Vsl, germ; warn = germ_check)
 
    all_switch_log =
       Vector{NamedTuple{(:outer, :bus, :qinj, :qmin, :qmax, :side),Tuple{Int,Int,Float64,Float64,Float64,Symbol}}}()
 
    # Keep the last coefficient matrix we computed (only meaningful if return_coeffs=true)
    Vcoeff_last = return_coeffs ? zeros(ComplexF64, nbus, order + 1) : nothing
+   # Coefficients of the last outer step, kept for the diagnosis of a non-converged run
+   Vcoeff_diag = Ref{Union{Nothing,Matrix{ComplexF64}}}(nothing)
    # Injection buffers, allocated before the closures that use them and never
    # rebound, so the closures capture them with their concrete type.
    Sinj = zeros(ComplexF64, nbus)
@@ -3032,7 +3212,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    # The kernel sits in a Ref because the non-finite fallback below switches
    # it for one call (a reassigned captured variable would be boxed).
    inner_kernel = Ref(inner)
-   function inner_solve_given_Q(Qwork::Vector{Float64}; want_coeffs::Bool = false)
+   function inner_solve_given_Q(Qwork::Vector{Float64}; want_coeffs::Bool = false, keep_coeffs::Bool = false)
       kernel = inner_kernel[]
       if kernel == :pq
          S = make_S(Pspec, Qwork)
@@ -3052,13 +3232,15 @@ function _solve_pf_apslf_with_pv_q_limits(
 
          Sinj_loc = calc_injections(Yuse, Vvec)
 
-         if want_coeffs
+         if want_coeffs || keep_coeffs
             Vcoeff_full = zeros(ComplexF64, nbus, order + 1)
             Vcoeff_full[slack, 1] = Vsl
             nonslack = [i for i = 1:nbus if i != slack]
             @inbounds for (idx, bus) in enumerate(nonslack)
                Vcoeff_full[bus, :] .= Vcoeff_red[idx, :]
             end
+            keep_coeffs && (Vcoeff_diag[] = Vcoeff_full)
+            want_coeffs || return Vvec, Sinj_loc, nothing
             return Vvec, Sinj_loc, Vcoeff_full
          else
             return Vvec, Sinj_loc, nothing
@@ -3085,6 +3267,7 @@ function _solve_pf_apslf_with_pv_q_limits(
          )::_PVKernelResult
          _assert_finite_vec(Vvec, "inner voltage state V")
          want_coeffs && _assert_finite_coeff_matrix(Vcoeff_full, "inner voltage coefficients")
+         keep_coeffs && (Vcoeff_diag[] = Vcoeff_full)
          Sinj_loc = calc_injections(Yuse, Vvec)
          return want_coeffs ? (Vvec, Sinj_loc, Vcoeff_full) : (Vvec, Sinj_loc, nothing)
       end
@@ -3167,7 +3350,7 @@ function _solve_pf_apslf_with_pv_q_limits(
       println("--- End Final Report ---\n")
    end
 
-   function make_result(; V, Sinj, bt, Q, converged, outer_iters, reason = nothing, Vcoeff = nothing)
+   function make_result(; V, Sinj, bt, Q, converged, outer_iters, reason = nothing, diagnosis = nothing, Vcoeff = nothing)
       base = (
          V = V,
          Sinj = Sinj,
@@ -3192,7 +3375,8 @@ function _solve_pf_apslf_with_pv_q_limits(
          q_limit_switch_deferred_count = q_limit_switch_deferred_count[],
       )
       with_reason = (reason === nothing) ? base : merge(base, (reason = reason,))
-      return (Vcoeff === nothing) ? with_reason : merge(with_reason, (Vcoeff = Vcoeff,))
+      with_diag = (diagnosis === nothing) ? with_reason : merge(with_reason, (diagnosis = diagnosis,))
+      return (Vcoeff === nothing) ? with_diag : merge(with_diag, (Vcoeff = Vcoeff,))
    end
 
    # -----------------------
@@ -3297,7 +3481,7 @@ function _solve_pf_apslf_with_pv_q_limits(
       # Step B: inner solve with current Q
       Vcoeff_opt = nothing
       try
-         V, Sinj_inner, Vcoeff_opt = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
+         V, Sinj_inner, Vcoeff_opt = inner_solve_given_Q(Q; want_coeffs = return_coeffs, keep_coeffs = true)
          copyto!(Sinj, Sinj_inner)
       catch err
          _is_nonfinite_inner_error(err) || rethrow(err)
@@ -3309,7 +3493,7 @@ function _solve_pf_apslf_with_pv_q_limits(
             fallback_inner = :direct_pv
             try
                inner_kernel[] = fallback_inner
-               Vfb, Sfb, Cfb = inner_solve_given_Q(Q; want_coeffs = return_coeffs)
+               Vfb, Sfb, Cfb = inner_solve_given_Q(Q; want_coeffs = return_coeffs, keep_coeffs = true)
                V .= Vfb
                Sinj .= Sfb
                Vcoeff_opt = Cfb
@@ -3457,8 +3641,21 @@ function _solve_pf_apslf_with_pv_q_limits(
       end
    end
 
-   # Non-converged
+   # Non-converged: explain from the coefficients of the last outer step
    print_final_report(false, max_outer, V, Q)
+   diagnosis = nothing
+   Vcd = Vcoeff_diag[]
+   if Vcd !== nothing && all(isfinite, Vcd)
+      diagnosis = apslf_convergence_diagnosis(
+         Vcd;
+         slack = slack,
+         order = order,
+         germ = germ,
+         tol = min(mis_tol_p, mis_tol_q),
+         r0max = isnan(germ_info.r0max) ? 0.0 : germ_info.r0max,
+      )
+      verbose >= 1 && println("APSLF diagnosis: ", diagnosis.message)
+   end
    return make_result(
       V = V,
       Sinj = Sinj,
@@ -3466,6 +3663,8 @@ function _solve_pf_apslf_with_pv_q_limits(
       Q = Q,
       converged = false,
       outer_iters = max_outer,
+      reason = diagnosis === nothing ? nothing : diagnosis.reason,
+      diagnosis = diagnosis,
       Vcoeff = return_coeffs ? Vcoeff_last : nothing,
    )
 end
@@ -3502,6 +3701,10 @@ Unified public entrypoint for APSLF (Holomorphic Embedding Load Flow) power flow
 - `converged::Bool`: Convergence flag
 - `outer_iters::Int`: Number of outer iterations required
 - `Vcoeff::Matrix{ComplexF64}`: Voltage series coefficients (if `return_coeffs=true`)
+- `reason::Symbol`, `diagnosis::NamedTuple`: only when `converged = false`;
+  `diagnosis.message` says why, for example
+  "s = 1 outside the Pade convergence region of the :deviation embedding
+  (pole pair at |s| = 0.30)". See [`apslf_convergence_diagnosis`](@ref).
 
 # Solution Methods
 

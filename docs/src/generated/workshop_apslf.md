@@ -689,11 +689,15 @@ larger convergence radius. `:noload` and `:flat` are experimental:
 `:noload` for comparisons (it diverges on large networks, see the PEGASE
 notebook), `:flat` only to reproduce results of versions before 0.9.15.
 
+The solver warns when a `:flat` germ violates the $s = 0$ equation. The
+cell switches that warning off (`germ_check = false`) and prints the
+`reason` that a non-converged result carries instead.
+
 ````@example workshop_apslf
-println("germ        converged   max mismatch (pu)   min |V| (pu)")
+println("germ        converged   max mismatch (pu)   min |V| (pu)   reason")
 for germ in (:deviation, :noload, :flat)
-   rg = solve_pf_apslf(case; order = 40, nr_polish = false, germ = germ)
-   @printf("%-11s %-11s %.2e            %.3f\n", germ, rg.converged, mismatch(case, rg), minimum(abs.(rg.V)))
+   rg = solve_pf_apslf(case; order = 40, nr_polish = false, germ = germ, germ_check = false)
+   @printf("%-11s %-11s %.2e            %.3f          %s\n", germ, rg.converged, mismatch(case, rg), minimum(abs.(rg.V)), rg.converged ? "" : rg.reason)
 end
 ````
 

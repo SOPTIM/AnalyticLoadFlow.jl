@@ -82,10 +82,39 @@ end
    res_nl = A.solve_demo_case(case; inner = :direct_pv, nr_polish = false, germ = :noload)
    @test maximum(abs.(res_dev.V .- res_nl.V)) < 1e-8   # same function at s = 1
    # the legacy flat germ on the full Y-bus is not exact here
-   res_flat = A.solve_pf_apslf_with_pv_q_limits(
+   res_flat = @test_logs (:warn, r"germ :flat violates the s = 0 equation") match_mode = :any A.solve_pf_apslf_with_pv_q_limits(
       case.Y, case.bustype, case.Pspec, case.Qspec, case.Vm, case.Qmin, case.Qmax;
       slack = 1, Vslack = ComplexF64(case.Vm[1], 0), inner = :direct_pv, order = 40, nr_polish = false, germ = :flat, max_outer = 5,
    )
    @test first(A.compute_demo_mismatch(case, res_flat)) > 1e-3
+   @test res_flat.reason == :flat_germ_inexact   # the diagnosis names the dropped s = 0 residual
    @test A.apslf_row_sums(case.Y) ≈ vec(sum(case.Y, dims = 2))
+end
+
+@testset "germ check warnings and diagnosis of a non-converged run" begin
+   # two buses, series reactance x = 0.1 pu, optional shunt susceptance at bus 2
+   y2(bsh) = ComplexF64[-10im 10im; 10im -10im+bsh*im]
+   solve2(Y, P; kw...) = A.solve_pf_apslf_with_pv_q_limits(
+      Y, [:slack, :pq], [0.0, P], [0.0, 0.0], [1.0, 1.0], [-Inf, -Inf], [Inf, Inf];
+      slack = 1, order = 30, nr_polish = false, max_outer = 1, kw...,
+   )
+   # :noload germ near the LC resonance: V0 = 10 / (10 - 50) = -0.25 pu at bus 2
+   gc = A.apslf_germ_check(y2(50.0), 1, 1.0 + 0im, :noload; warn = false)
+   @test gc.vmin ≈ 0.25 atol = 1e-12
+   @test gc.vmin_bus == 2
+   @test_logs (:warn, r"germ :noload has min \|V0\| = 0.250 pu at bus 2") match_mode = :any solve2(y2(50.0), -0.1; germ = :noload)
+   # a pure series network with Vslack = 1: :flat is exact, :deviation is exact by construction, no warning
+   @test A.apslf_germ_check(_series_3bus(), 1, 1.0 + 0im, :flat).r0max < 1e-12
+   @test_logs A.apslf_germ_check(_series_3bus(), 1, 1.0 + 0im, :flat)
+   @test_logs A.apslf_germ_check(y2(50.0), 1, 1.05 + 0im, :deviation)
+   # the 2-bus line carries at most 1 / (2x) = 5 pu: 4 pu converges without a diagnosis,
+   # 8 pu has no solution and the Pade value at s = 1 does not settle
+   r_ok = solve2(y2(0.0), -4.0)
+   @test r_ok.converged && !hasproperty(r_ok, :diagnosis)
+   r_bad = solve2(y2(0.0), -8.0)
+   @test !r_bad.converged
+   @test r_bad.reason == :outside_pade_region == r_bad.diagnosis.reason
+   @test abs(r_bad.diagnosis.pole_min) < 1
+   @test r_bad.diagnosis.pade_change > 1e-2
+   @test occursin("outside the Pade convergence region of the :deviation embedding", r_bad.diagnosis.message)
 end

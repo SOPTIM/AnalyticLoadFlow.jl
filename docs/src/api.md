@@ -20,6 +20,7 @@ AnalyticLoadFlow.pade_eval
 AnalyticLoadFlow.poly_roots
 AnalyticLoadFlow.pade_poles
 AnalyticLoadFlow.stability_from_Vcoeff
+AnalyticLoadFlow.apslf_convergence_diagnosis
 AnalyticLoadFlow.st_level
 ```
 
@@ -57,6 +58,7 @@ AnalyticLoadFlow.safe_get
 AnalyticLoadFlow.apslf_germ
 AnalyticLoadFlow.apslf_noload_germ
 AnalyticLoadFlow.apslf_row_sums
+AnalyticLoadFlow.apslf_germ_check
 ```
 
 ## Branches, Transformers and Phase Shifters
