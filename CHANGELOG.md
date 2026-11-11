@@ -1,5 +1,12 @@
 # Changelog
 
+## Version 0.11.0
+- `precision = :double_double`: series and Padé of the direct kernel in double-double arithmetic; default `:float64` unchanged
+- case6495rte converges without NR polish at order 48 (#25)
+- Diagnosis `:precision_limit` when Float64 stalls with a Padé pole inside the unit circle
+- Without finite Q limits the direct kernel runs a single pass instead of repeating the same solve
+- Fixed: NR polish warned "Rejecting NR polish step" on a candidate already below the tolerance
+
 ## Version 0.10.3
 - Phase shifters: the default `shift_embedding = :auto` ramps the shift angle with `s`. On case6495rte the Padé pole pair moves from |s| = 0.30 to 0.73; without NR polish the run still reports `converged = false` (voltage error 8e-6 pu at order 24, 1e-8 pu at order 32, #23)
 - Shifts above 90 degrees (vector groups) keep the physical sign of the coupling, also next to negative resistances

@@ -431,7 +431,8 @@ end
    )
    @test max(maxP_alt, maxQ_alt) > 1e-3
 
-   res_no_polish = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
+   # Rejection needs a candidate above nr_tol (below it the polish takes no step): order 2
+   res_low_order = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,
       bustype,
       Pspec,
@@ -440,7 +441,7 @@ end
       [-1.0, -1.0],
       [1.0, 1.0];
       inner = :direct_pv,
-      order = 12,
+      order = 2,
       use_pade = true,
       nr_polish = false,
       enforce_q_limits = false,
@@ -455,7 +456,7 @@ end
       [-1.0, -1.0],
       [1.0, 1.0];
       inner = :direct_pv,
-      order = 12,
+      order = 2,
       use_pade = true,
       nr_polish = true,
       nr_max_iter = 1,
@@ -463,6 +464,7 @@ end
       enforce_q_limits = false,
       max_outer = 1,
    )
+   @test res_rejected_polish.nr_polish_score_before > 1e-8
    @test res_rejected_polish.nr_polish_rejected == true
    @test res_rejected_polish.nr_polish_reject_reason in (
       :nr_polish_voltage_explosion,
@@ -472,7 +474,7 @@ end
    )
    @test res_rejected_polish.nr_polish_failed_no_acceptable_step == true
    @test res_rejected_polish.nr_polish_score_after >= res_rejected_polish.nr_polish_score_before
-   @test norm(res_rejected_polish.V - res_no_polish.V) < 1e-9
+   @test norm(res_rejected_polish.V - res_low_order.V) < 1e-9
 
    res_damped_polish =
       @test_logs min_level=Logging.Debug match_mode=:any (:debug, r"NR polish rejected damped trial") AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
@@ -507,7 +509,7 @@ end
       [-1.0, -1.0],
       [1.0, 1.0];
       inner = :direct_pv,
-      order = 12,
+      order = 2,
       use_pade = true,
       nr_polish = true,
       nr_max_iter = 1,
@@ -517,7 +519,7 @@ end
    )
    @test res_no_acceptable_step.nr_polish_failed_no_acceptable_step == true
    @test res_no_acceptable_step.nr_polish_rejected == true
-   @test norm(res_no_acceptable_step.V - res_no_polish.V) < 1e-9
+   @test norm(res_no_acceptable_step.V - res_low_order.V) < 1e-9
 
    res_polish_no_pv_pq_switch = AnalyticLoadFlow.solve_pf_apslf_with_pv_q_limits(
       Y,

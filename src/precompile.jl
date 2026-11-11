@@ -3,7 +3,7 @@
 # Purpose: Precompile workload. ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD selects
 #          how much of the solver is compiled into the package image at
 #          install time: "off" nothing, "core" (default) the one call every
-#          session makes, "full" every solver path the documentation and the
+#          session makes plus the double-double path, "full" every solver path the documentation and the
 #          workshop notebooks use (for sysimage builds).
 #
 # Copyright 2026 SOPTIM AG
@@ -27,11 +27,14 @@ using PrecompileTools: @setup_workload, @compile_workload
 # @compile_workload block is compiled as top level before it runs, so a
 # guarded block would cost its compile time even when it is switched off.
 
-# "core": the default call on the built-in 9-bus case. This is what a
-# session pays on its first solve_pf_apslf.
+# "core": the default call on the built-in 9-bus case, and the same case with
+# precision = :double_double (recursion, refinement and Padé of
+# double_double.jl). This is what a session pays on its first solve_pf_apslf.
 function _precompile_core()
    with_logger(NullLogger()) do
-      solve_pf_apslf(demo_case_9bus())
+      case = demo_case_9bus()
+      solve_pf_apslf(case)
+      solve_pf_apslf(case; order = 12, nr_polish = false, precision = :double_double)
    end
    return nothing
 end
@@ -75,6 +78,7 @@ function _precompile_full()
       solve_pf_apslf(case; order = 12, nr_polish = false, enforce_q_limits = false)
       solve_pf_apslf(case; order = 12, nr_polish = false, germ = :noload)
       solve_pf_apslf(case; order = 12, nr_polish = true)
+      solve_pf_apslf(case; order = 12, nr_polish = false, precision = :double_double)
       rc = solve_pf_apslf(case; order = 12, nr_polish = false, return_coeffs = true)
       evaluate_series(rc.Vcoeff[5, :], APSLFEvaluationOptions(mode = :taylor))
       evaluate_series(rc.Vcoeff[5, :], APSLFEvaluationOptions(mode = :pade))

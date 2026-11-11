@@ -28,6 +28,7 @@ using Logging
 using SparseArrays
 
 include("solver_core.jl")
+include("double_double.jl")
 include("yamlparams.jl")
 include("utils.jl")
 include("line_flows.jl")
