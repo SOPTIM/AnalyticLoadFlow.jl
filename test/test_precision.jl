@@ -5,8 +5,8 @@
 # Organization: SOPTIM AG
 # Purpose: Tests for `precision = :double_double` (double-double arithmetic
 #          against BigFloat, the direct PV kernel in double-double, the
-#          unchanged Float64 path), the NR polish exit below the tolerance
-#          and the precision-limit diagnosis.
+#          unchanged Float64 path), the NR polish exit below the tolerance,
+#          the single pass in direct mode and the precision-limit diagnosis.
 #
 # Copyright 2026 SOPTIM AG
 #
@@ -115,6 +115,24 @@ end
    @test_throws ArgumentError solve_pf_apslf(c; mode = :outer, order = 24, precision = :double_double)
 end
 
+@testset "Direct mode without a possible PV switch runs one pass" begin
+   c = demo_case_9bus()
+   kw = (order = 4, nr_polish = false, outer_fallback_nbus_max = 0, return_coeffs = true)
+   # not converged at order 4: one pass with limits off or infinite, max_outer with enforced finite limits
+   r_off = solve_pf_apslf(c; kw..., enforce_q_limits = false)
+   @test !r_off.converged
+   @test r_off.outer_iters == 1
+   c_inf = merge(c, (Qmin = fill(-Inf, length(c.Qmin)), Qmax = fill(Inf, length(c.Qmax))))
+   r_inf = solve_pf_apslf(c_inf; kw...)
+   @test !r_inf.converged
+   @test r_inf.outer_iters == 1
+   @test r_inf.V == r_off.V
+   r_lim = solve_pf_apslf(c; kw..., max_outer = 7)
+   @test r_lim.converged || r_lim.outer_iters == 7
+   # converged runs are unchanged
+   @test solve_pf_apslf(c; order = 40, nr_polish = false, enforce_q_limits = false).outer_iters == 1
+end
+
 @testset "NR polish stops below the tolerance" begin
    c = demo_case_9bus()
    r0 = solve_pf_apslf(c; order = 40, nr_polish = false, enforce_q_limits = false)
@@ -158,6 +176,30 @@ end
 
    # clean coefficients: no precision limit reported
    @test A.apslf_convergence_diagnosis(coeffs(40, 0.0); slack = 1).reason == :mismatch_above_tol
+end
+
+@testset "Float64 stagnates, double-double converges (three-bus case, #25)" begin
+   # Strong capacitive injection behind a stiff link: the embedding has a Padé
+   # pole inside the unit circle (|s| about 0.2), the coefficients grow with
+   # the order, and the stiff link turns the Float64 rounding of the two bus
+   # voltages into a mismatch far above the tolerance, at every order.
+   z = 0.02 + 0.2im
+   ystiff = -1e4im
+   y = 1 / z
+   Y = ComplexF64[y -y 0; -y y+ystiff -ystiff; 0 -ystiff ystiff]
+   c = (Y = Y, bustype = [:Slack, :PQ, :PQ], Pspec = [0.0, 0.25, 0.25], Qspec = [0.0, 3.0, 3.0], Vm = ones(3), Qmin = fill(-Inf, 3), Qmax = fill(Inf, 3), slack = 1)
+   mismatch(r) = maximum(A.max_mismatch(c.Y, r.bustype, c.Pspec, r.Q, r.V; slack = 1))
+   for order in (32, 40, 48)
+      r64 = solve_pf_apslf(c; order = order, nr_polish = false, outer_fallback_nbus_max = 0)
+      @test !r64.converged
+      @test mismatch(r64) > 1e-8
+      @test abs(r64.diagnosis.pole_min) < 1.0
+      @test r64.outer_iters == 1
+      rdd = solve_pf_apslf(c; order = order, nr_polish = false, outer_fallback_nbus_max = 0, precision = :double_double)
+      @test rdd.converged
+      @test mismatch(rdd) < 1e-9
+      @test maximum(abs.(rdd.V .- r64.V)) < 1e-6
+   end
 end
 
 const _RTE_6495 = normpath(joinpath(@__DIR__, "..", "data", "_downloaded", "case6495rte.m"))

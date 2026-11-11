@@ -3065,6 +3065,13 @@ Precision (`precision` keyword):
 - Only for `inner = :direct_pv`; `inner = :pq` throws. The result reports
   the setting in `precision`.
 
+Outer passes:
+With the direct kernel and no PV bus that can switch (`enforce_q_limits = false`,
+or no finite `Qmin`/`Qmax` at a PV bus) every pass would compute the same
+series from the same germ; the solver then runs one pass, also when it does
+not converge (`outer_iters = 1`). The result is the one of `max_outer`
+passes bit for bit.
+
 Non-converged result:
 When the outer loop ends without convergence, the result carries
 `diagnosis` from [`apslf_convergence_diagnosis`](@ref) (nearest Padé pole,
@@ -3661,6 +3668,13 @@ function _solve_pf_apslf_with_pv_q_limits(
    # -----------------------
    V = zeros(ComplexF64, nbus)
 
+   # Direct kernel with no PV bus that can switch (limits not enforced, or no
+   # finite limit): nothing changes between the passes, every pass computes
+   # the same series from the same germ. One pass then gives the result of
+   # max_outer passes bit for bit.
+   single_pass = inner == :direct_pv && !(enforce_q_limits && any(i -> bt[i] == :pv && (isfinite(Qmin[i]) || isfinite(Qmax[i])), 1:nbus))
+   outer_done = max_outer
+
    for outer = 1:max_outer
       check_solver_timeout!(:outer_iteration)
       pv_buses = findall(i -> bt[i] == :pv, 1:nbus)
@@ -3916,10 +3930,14 @@ function _solve_pf_apslf_with_pv_q_limits(
             )
          end
       end
+      if single_pass
+         outer_done = outer
+         break
+      end
    end
 
    # Non-converged: explain from the coefficients of the last outer step
-   print_final_report(false, max_outer, V, Q)
+   print_final_report(false, outer_done, V, Q)
    diagnosis = nothing
    Vcd = Vcoeff_diag[]
    if Vcd !== nothing && all(isfinite, Vcd)
@@ -3940,7 +3958,7 @@ function _solve_pf_apslf_with_pv_q_limits(
       bt = bt,
       Q = Q,
       converged = false,
-      outer_iters = max_outer,
+      outer_iters = outer_done,
       reason = diagnosis === nothing ? nothing : diagnosis.reason,
       diagnosis = diagnosis,
       Vcoeff = return_coeffs ? Vcoeff_last : nothing,

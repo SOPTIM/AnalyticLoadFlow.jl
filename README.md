@@ -84,7 +84,7 @@ using AnalyticLoadFlow
 
 From a local checkout, run commands with `julia --project=.` from the repository root.
 
-The environment variable `ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD` selects how much of the solver is compiled into the package image at install time: `core` (default) the default `solve_pf_apslf` call, `full` every solver path of the documentation and the workshop notebooks (for sysimage builds), `off` nothing. It is read when the package precompiles, so set it before `Pkg.add` or `Pkg.precompile()`.
+The environment variable `ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD` selects how much of the solver is compiled into the package image at install time: `core` (default) the default `solve_pf_apslf` call and the one with `precision = :double_double`, `full` every solver path of the documentation and the workshop notebooks (for sysimage builds), `off` nothing. It is read when the package precompiles, so set it before `Pkg.add` or `Pkg.precompile()`.
 
 ## Run the example
 
