@@ -21,6 +21,8 @@ AnalyticLoadFlow.poly_roots
 AnalyticLoadFlow.pade_poles
 AnalyticLoadFlow.stability_from_Vcoeff
 AnalyticLoadFlow.apslf_convergence_diagnosis
+AnalyticLoadFlow.DD
+AnalyticLoadFlow.CDD
 AnalyticLoadFlow.st_level
 ```
 

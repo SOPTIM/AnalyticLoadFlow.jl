@@ -922,7 +922,8 @@ end
 
 """
     apslf_convergence_diagnosis(Vcoeff; slack=1, order=size(Vcoeff,2)-1, germ=:deviation,
-                                tol=1e-8, region_tol=1e-2, r0max=0.0, r0_tol=1e-6) -> NamedTuple
+                                precision=:float64, tol=1e-8, region_tol=1e-2, r0max=0.0,
+                                r0_tol=1e-6, stagnation_ratio=0.1, rounding_factor=1e4) -> NamedTuple
 
 Explain why an APSLF run did not converge, from its voltage coefficients.
 `solve_pf_apslf_with_pv_q_limits` stores the result as `diagnosis` when it
@@ -941,33 +942,61 @@ axis does not block `s = 1`). A change between `tol` and `region_tol` means
 the Padé sequence still moves. For `germ = :flat`, `r0max > r0_tol` (see
 [`apslf_germ_check`](@ref)) is reported first.
 
+Precision limit: with `|pole_min| < 1` the coefficients grow with the order
+and the Padé value at `s = 1` is a difference of large terms. Once the change
+no longer falls (`pade_change` above `stagnation_ratio` times the change from
+order `order - 6` to `order - 4`) or is within `rounding_factor` of the
+rounding level of the largest coefficient (`eps * max |V^(n)|`), rounding of
+the Float64 coefficients sets the level and a higher order does not help
+(case6495rte: about 1e-7 pu from order 38 on). Below order 32 the order is
+suggested first. The message then names `nr_polish = true` and
+`precision = :double_double` with order 48 or 56. For coefficients of a
+`precision = :double_double` run the order is suggested instead.
+
 Returns `(reason, message, pole_min, pole_bus, pole_pair, radius, pade_change, order)`,
 `reason` one of `:flat_germ_inexact`, `:outside_pade_region`,
-`:pade_not_converged`, `:mismatch_above_tol` (Padé value stable, mismatch
-still above the tolerance, for example after PV/PQ switching).
+`:precision_limit`, `:pade_not_converged`, `:mismatch_above_tol` (Padé value
+stable, mismatch still above the tolerance, for example after PV/PQ switching).
 """
 function apslf_convergence_diagnosis(
    Vcoeff::Matrix{ComplexF64};
    slack::Int = 1,
    order::Int = size(Vcoeff, 2) - 1,
    germ::Symbol = :deviation,
+   precision::Symbol = :float64,
    tol::Float64 = 1e-8,
    region_tol::Float64 = 1e-2,
    r0max::Float64 = 0.0,
    r0_tol::Float64 = 1e-6,
+   stagnation_ratio::Float64 = 0.1,
+   rounding_factor::Float64 = 1e4,
 )
    st = stability_from_Vcoeff(Vcoeff; slack = slack, order = order, critical_poles = 0)
    pade_change = NaN
+   pade_change_before = NaN   # change from order - 6 to order - 4
    if order >= 4
       opts = APSLFEvaluationOptions(mode = :pade)
       pade_change = 0.0
+      order >= 8 && (pade_change_before = 0.0)
       for i in axes(Vcoeff, 1)
          i == slack && continue
          vN = evaluate_series(Vcoeff[i, 1:(order+1)], opts; collect_logs = false).voltage
          vN2 = evaluate_series(Vcoeff[i, 1:(order-1)], opts; collect_logs = false).voltage
          pade_change = max(pade_change, abs(vN - vN2))
+         if order >= 8
+            vN4 = evaluate_series(Vcoeff[i, 1:(order-3)], opts; collect_logs = false).voltage
+            vN6 = evaluate_series(Vcoeff[i, 1:(order-5)], opts; collect_logs = false).voltage
+            pade_change_before = max(pade_change_before, abs(vN4 - vN6))
+         end
       end
    end
+   # no real decrease over the last orders, or the change is down at the
+   # rounding level of the largest coefficient
+   cmax = 0.0
+   for n = 1:(order+1), i in axes(Vcoeff, 1)
+      i == slack || (cmax = max(cmax, abs(Vcoeff[i, n])))
+   end
+   stagnates = pade_change > stagnation_ratio * pade_change_before || pade_change <= rounding_factor * eps(Float64) * cmax
    pmin = abs(st.pole_min)
    what = st.pole_pair ? "pole pair" : "pole"
    if germ == :flat && r0max > r0_tol
@@ -976,11 +1005,23 @@ function apslf_convergence_diagnosis(
    elseif pade_change > region_tol && pmin < 1.0
       reason = :outside_pade_region
       message = @sprintf("s = 1 outside the Pade convergence region of the :%s embedding (%s at |s| = %.2f)", germ, what, pmin)
+   elseif pade_change > tol && pmin < 1.0 && stagnates && order >= 32 && precision === :float64
+      reason = :precision_limit
+      message = @sprintf(
+         "Pade value at s = 1 stagnates at %.2e pu: Float64 limit with a %s at |s| = %.2f inside the unit circle, a higher order does not help; use nr_polish = true or precision = :double_double with order 48 or 56",
+         pade_change,
+         what,
+         pmin
+      )
    elseif pade_change > tol
       reason = :pade_not_converged
       message = @sprintf("Pade value at s = 1 still changes by %.2e pu from order %d to %d", pade_change, order - 2, order)
       # the series is still moving, so more terms are the first thing to try
-      order < 32 && (message *= "; a higher order (e.g. 32) lowers the mismatch")
+      if precision === :double_double
+         order < 56 && (message *= order < 48 ? "; a higher order (e.g. 48) lowers the mismatch" : "; a higher order (e.g. 56) lowers the mismatch")
+      else
+         order < 32 && (message *= "; a higher order (e.g. 32) lowers the mismatch")
+      end
    else
       reason = :mismatch_above_tol
       message = "Pade value at s = 1 is stable in the order, the mismatch stays above the tolerance"
@@ -1188,6 +1229,14 @@ apslf_shift_split(Y::AbstractMatrix{ComplexF64}, order::Int) = apslf_shift_split
 # kernel, asymmetric Y) and :off otherwise; an explicit :phase_ramp outside
 # that scope is an error. Returns :off or :phase_ramp; a Y without a pair the
 # split ramps also gives :off (see apslf_shift_split).
+# precision = :float64 | :double_double (double_double.jl), direct PV kernel only
+function _check_precision(precision::Symbol, inner::Symbol = :direct_pv)
+   precision in (:float64, :double_double) || throw(ArgumentError("precision must be :float64 or :double_double, got :$(precision)"))
+   (precision === :float64 || inner == :direct_pv) ||
+      throw(ArgumentError("precision = :double_double is only implemented for inner = :direct_pv"))
+   return precision
+end
+
 function _resolve_shift_embedding(Y::SparseY, shift_embedding::Symbol, germ::Symbol, inner::Symbol)
    shift_embedding in (:auto, :off, :phase_ramp) ||
       throw(ArgumentError("shift_embedding must be :auto, :off or :phase_ramp, got :$(shift_embedding)"))
@@ -2465,6 +2514,10 @@ Optional:
   has asymmetric off-diagonal pairs, else `:off`. `:off` is the kernel
   without the ramp; for a symmetric `Y` both give the same result bit for
   bit. `:phase_ramp` forces the ramp and needs `germ = :deviation`.
+- `precision = :float64` (default) or `:double_double`: recursion and Padé
+  evaluation in double-double arithmetic (about 32 digits) on the same
+  Float64 LU, each order solved with iterative refinement. The returned
+  coefficients are rounded to Float64. See `solve_pf_apslf_with_pv_q_limits`.
 """
 function apslf_pf_pv_direct(
    Y::SparseY,
@@ -2478,6 +2531,7 @@ function apslf_pf_pv_direct(
    use_pade::Bool = true,
    germ::Symbol = :deviation,
    shift_embedding::Symbol = :auto,
+   precision::Symbol = :float64,
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    debug::Bool = false,
    debug_every::Int = 1,
@@ -2495,6 +2549,7 @@ function apslf_pf_pv_direct(
    @assert length(Pspec) == nbus && length(Qspec) == nbus && length(Vm) == nbus
    @assert 1 <= slack <= nbus
    @assert order >= 1
+   _check_precision(precision)
    # phase ramp split (apslf_shift_split); a ramp without a pair to ramp is :off, the unchanged kernel
    sp = _resolve_shift_embedding(Y, shift_embedding, germ, :direct_pv) == :phase_ramp ? apslf_shift_split(Y, order) : nothing
 
@@ -2727,7 +2782,9 @@ function apslf_pf_pv_direct(
    x = zeros(Float64, nunk)
    Wc_prev = zeros(ComplexF64, nbus)  # conj(W^(n-1)) buffer
 
-   for n = 1:order
+   eval_opts = isnothing(evaluation_options) ? APSLFEvaluationOptions(mode = use_pade ? :pade : :taylor) : evaluation_options
+   # precision = :double_double runs its own recursion below
+   for n = 1:(precision === :float64 ? order : 0)
       _maybe_check_timeout(timeout_check, :apslf_direct_order)
       @inbounds for i = 1:nbus
          Wc_prev[i] = conj(Wcoeff[i, n])  # Wcoeff col n is W^(n-1)
@@ -2822,16 +2879,25 @@ function apslf_pf_pv_direct(
    V[slack] = Vslack
    Qpv = zeros(Float64, npv)
 
-   eval_opts = isnothing(evaluation_options) ? APSLFEvaluationOptions(mode = use_pade ? :pade : :taylor) : evaluation_options
-   @inbounds for i = 1:nbus
-      i == slack && continue
-      cV = @view Vcoeff[i, :]
-      V[i] = evaluate_series(cV, eval_opts; collect_logs = false).voltage
-   end
-   if npv > 0
-      @inbounds for k = 1:npv
-         cQ = ComplexF64.(Qcoeff[k, :], 0.0)
-         Qpv[k] = real(evaluate_series(cQ, eval_opts; collect_logs = false).voltage)
+   if precision === :double_double
+      # recursion and evaluation in double-double on the same Asys and Fsys (double_double.jl)
+      Vdd, Qdd = _kernel(_apslf_direct_dd!)(
+         Vcoeff, Wcoeff, Qcoeff, Asys, Fsys, bustype, Pspec, Sstar, Vm, V0, drow, nonslack, pos_ns, pv, pv_pos, slack, Vslack, order,
+         germ == :deviation, sh_rows, sh_cols, sh_coeff, eval_opts.mode === :taylor, eval_opts, timeout_check,
+      )::Tuple{Vector{ComplexF64},Vector{Float64}}
+      V .= Vdd
+      Qpv .= Qdd
+   else
+      @inbounds for i = 1:nbus
+         i == slack && continue
+         cV = @view Vcoeff[i, :]
+         V[i] = evaluate_series(cV, eval_opts; collect_logs = false).voltage
+      end
+      if npv > 0
+         @inbounds for k = 1:npv
+            cQ = ComplexF64.(Qcoeff[k, :], 0.0)
+            Qpv[k] = real(evaluate_series(cQ, eval_opts; collect_logs = false).voltage)
+         end
       end
    end
 
@@ -2983,6 +3049,22 @@ Phase shifters (`shift_embedding` keyword):
   `:phase_ramp`) and the pairs that were not ramped in `shift_skipped`.
 - `converged` keeps its meaning and its tolerances; no Newton step is added.
 
+Precision (`precision` keyword):
+- `precision = :float64` (default): the kernel as before, bit for bit.
+- `precision = :double_double`: the direct PV kernel computes the series
+  coefficients and the Padé value in double-double arithmetic (about 32
+  significant digits, own routines). The Float64 sparse LU stays; every order
+  is solved with iterative refinement, residual in double-double. The result
+  (`V`, `Vcoeff`) is rounded to Float64.
+- Use it where a Padé pole inside the unit circle makes the coefficients grow
+  and Float64 rounding keeps the mismatch above the tolerance
+  (`reason = :precision_limit`). Both parts are needed: on case6495rte
+  neither exact coefficients with a Float64 Padé nor a Padé in higher
+  precision on Float64 coefficients gets below 1e-6 pu, double-double reaches
+  7e-10 pu at order 48 and 4e-11 pu at order 56 without a Newton step.
+- Only for `inner = :direct_pv`; `inner = :pq` throws. The result reports
+  the setting in `precision`.
+
 Non-converged result:
 When the outer loop ends without convergence, the result carries
 `diagnosis` from [`apslf_convergence_diagnosis`](@ref) (nearest Padé pole,
@@ -3085,6 +3167,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    use_pade::Bool = true,
    germ::Symbol = :deviation,    # :deviation | :noload | :flat
    shift_embedding::Symbol = :auto,  # :auto | :off | :phase_ramp (apslf_shift_split)
+   precision::Symbol = :float64,     # :float64 | :double_double (direct kernel only)
    evaluation_options::Union{Nothing,APSLFEvaluationOptions} = nothing,
    inner::Symbol = :direct_pv,   # :direct_pv | :pq
    max_outer::Int = 30,
@@ -3145,6 +3228,7 @@ function _solve_pf_apslf_with_pv_q_limits(
    end
    @assert inner in (:pq, :direct_pv) "inner must be :pq | :direct_pv (former name :direct_pv_sparse)"
    germ in (:flat, :noload, :deviation) || throw(ArgumentError("germ must be :noload, :deviation or :flat, got :$(germ)"))
+   _check_precision(precision, inner)
    # Resolved once per solve; a phase ramp without a pair to ramp is :off.
    # Assigned once each, the closures below capture them.
    shift_split = _resolve_shift_embedding(Y, shift_embedding, germ, inner) == :phase_ramp ? apslf_shift_split(Y, 1) : nothing
@@ -3288,6 +3372,8 @@ function _solve_pf_apslf_with_pv_q_limits(
          check_solver_timeout!(:nr_polish_iteration)
          current_score = nr_mismatch_score(cache, V, Qwork)
          isfinite(current_score) || break
+         # already below the tolerance: a further step works at rounding level
+         current_score < nr_tol && break
          accepted = false
          accepted_dx_norm = Inf
          accepted_residual_norm = current_score
@@ -3446,6 +3532,7 @@ function _solve_pf_apslf_with_pv_q_limits(
             use_pade = use_pade,
             germ = germ,
             shift_embedding = shift_mode,
+            precision = precision,
             evaluation_options = evaluation_options,
             debug = false,
             self_check = false,
@@ -3549,6 +3636,7 @@ function _solve_pf_apslf_with_pv_q_limits(
          apslf_germ = germ,
          shift_embedding = shift_mode,
          shift_skipped = shift_skipped,
+         precision = precision,
          nr_polish_enabled = nr_polish,
          nr_polish_start = nr_polish ? :apslf_solution : :none,
          nr_polish_rejected = nr_polish_rejected[],
@@ -3840,6 +3928,7 @@ function _solve_pf_apslf_with_pv_q_limits(
          slack = slack,
          order = order,
          germ = germ,
+         precision = precision,
          tol = min(mis_tol_p, mis_tol_q),
          r0max = isnan(germ_info.r0max) ? 0.0 : germ_info.r0max,
       )
@@ -3882,6 +3971,11 @@ Unified public entrypoint for APSLF (Holomorphic Embedding Load Flow) power flow
 - `shift_embedding::Symbol = :auto`: phase shifters ramped with `s` in direct mode
   when `Y` is non-symmetric, `:off` switches it off; see
   `solve_pf_apslf_with_pv_q_limits`. The outer fallback runs with `:off`.
+- `precision::Symbol = :float64`: `:double_double` runs the series and the
+  Padé evaluation of the direct kernel in double-double arithmetic, for cases
+  that stop at the Float64 limit (`reason = :precision_limit`, e.g.
+  case6495rte with order 48 or 56). Direct mode only; the outer fallback runs
+  with `:float64`.
 - Additional kwargs passed to `solve_pf_apslf_with_pv_q_limits`
 
 # Returns
@@ -3894,6 +3988,7 @@ Unified public entrypoint for APSLF (Holomorphic Embedding Load Flow) power flow
 - `outer_iters::Int`: Number of outer iterations required
 - `shift_embedding::Symbol`: embedding that ran, `:phase_ramp` or `:off`;
   `shift_skipped`: pairs not ramped, as `(i, j, reason)`
+- `precision::Symbol`: arithmetic of the series, `:float64` or `:double_double`
 - `Vcoeff::Matrix{ComplexF64}`: Voltage series coefficients (if `return_coeffs=true`)
 - `reason::Symbol`, `diagnosis::NamedTuple`: only when `converged = false`;
   `diagnosis.message` says why, for example
@@ -3996,7 +4091,8 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
    # converge, retry with the outer PQ loop (within the size bounds). The
    # former dense-direct retry is gone: it solved the same augmented system
    # with a dense instead of a sparse LU.
-   # The outer PQ loop has no phase ramp: it runs with shift_embedding = :off
+   # The outer PQ loop has no phase ramp and no double-double path: it runs
+   # with precision = :float64 and shift_embedding = :off
    # (what :auto resolves to there), also after an explicit :phase_ramp.
    if mode == :direct && !res.converged
       npv_for_outer = count(bt -> _is_pv(bt), getfield(spec, :bustype))
@@ -4012,7 +4108,7 @@ function solve_pf_apslf(spec; mode::Symbol = :direct, kwargs...)
             slack = getfield(spec, :slack),
             Vslack = Vslack,
             inner = :pq,
-            merge(kw_forward, (shift_embedding = :off,))...,
+            merge(kw_forward, (shift_embedding = :off, precision = :float64))...,
          )
          res_outer.converged && return merge(res_outer, (effective_mode = :outer,))
       elseif verbose_level >= 1

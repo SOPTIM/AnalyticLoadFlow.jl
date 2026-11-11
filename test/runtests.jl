@@ -31,6 +31,7 @@ const _SUITE_FILES = (
    ("Minimal Y-Bus Example", "test_minimal_example.jl"),
    ("Germ and Inner Solver", "test_germ_fix.jl"),
    ("Transformers, PST and MATPOWER", "test_transformers.jl"),
+   ("Precision, NR Polish Exit and Diagnosis", "test_precision.jl"),
 )
 
 function _render_progress(done::Int, total::Int, label::AbstractString = "")

@@ -10,7 +10,7 @@
 # direct PV kernel. The case file is downloaded from
 # the MATPOWER repository into data/_downloaded/ (git-ignored) when missing.
 # Run with: julia --project=. examples/pegase_matpower_demo.jl [--case=case2869pegase|case1354pegase|path.m]
-#           [--order=40] [--qlimits] [--polish] [--germ=deviation|noload]
+#           [--order=40] [--qlimits] [--polish] [--germ=deviation|noload] [--precision=float64|double_double]
 #
 # Data: PEGASE cases, CC BY 4.0, C. Josz, S. Fliscounakis, J. Maeght, P. Panciatici,
 # "AC Power Flow Data in MATPOWER and QCQP Format: iTesla, RTE Snapshots, and PEGASE",
@@ -42,7 +42,7 @@ const MATPOWER_RAW = "https://raw.githubusercontent.com/MATPOWER/matpower/master
 const DOWNLOAD_DIR = normpath(joinpath(@__DIR__, "..", "data", "_downloaded"))
 
 function parse_args(args = ARGS)
-   opts = (case = "case2869pegase", order = 40, qlimits = false, polish = false, germ = :deviation)
+   opts = (case = "case2869pegase", order = 40, qlimits = false, polish = false, germ = :deviation, precision = :float64)
    for arg in args
       if startswith(arg, "--case=")
          opts = merge(opts, (case = String(last(split(arg, "="; limit = 2))),))
@@ -54,8 +54,10 @@ function parse_args(args = ARGS)
          opts = merge(opts, (polish = true,))
       elseif startswith(arg, "--germ=")
          opts = merge(opts, (germ = Symbol(last(split(arg, "="; limit = 2))),))
+      elseif startswith(arg, "--precision=")
+         opts = merge(opts, (precision = Symbol(last(split(arg, "="; limit = 2))),))
       else
-         error("Unsupported option: $(arg). Use --case=NAME|path.m, --order=N, --qlimits, --polish, --germ=deviation|noload.")
+         error("Unsupported option: $(arg). Use --case=NAME|path.m, --order=N, --qlimits, --polish, --germ=deviation|noload, --precision=float64|double_double.")
       end
    end
    return opts
@@ -97,9 +99,9 @@ function main(args = ARGS)
       @printf("phase-shift angles after conversion: %d values in [%.2f°, %.2f°]\n", length(shifts), minimum(shifts), maximum(shifts))
    end
 
-   println("\nsolver: mode = :direct (sparse direct PV kernel), order = $(opts.order), Padé, germ = :$(opts.germ), NR polish = $(opts.polish), Q limits = $(opts.qlimits)")
+   println("\nsolver: mode = :direct (sparse direct PV kernel), order = $(opts.order), Padé, germ = :$(opts.germ), precision = :$(opts.precision), NR polish = $(opts.polish), Q limits = $(opts.qlimits)")
    # first call includes compilation; time the second one
-   solve() = solve_pf_apslf(case; mode = :direct, order = opts.order, nr_polish = opts.polish, enforce_q_limits = opts.qlimits, germ = opts.germ, return_coeffs = true)
+   solve() = solve_pf_apslf(case; mode = :direct, order = opts.order, nr_polish = opts.polish, enforce_q_limits = opts.qlimits, germ = opts.germ, precision = opts.precision, return_coeffs = true)
    res = solve()
    t_solve = @elapsed res = solve()
    maxP, maxQ = A.compute_demo_mismatch(case, res)
